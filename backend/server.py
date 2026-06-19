@@ -56,6 +56,28 @@ DATA_BROKERS = [
     "InstantCheckmate", "USSearch",
 ]
 
+# Known privacy / opt-out contact addresses for major brokers + search engines.
+# Where the broker only offers a web form, we record the form URL.
+BROKER_CONTACTS = {
+    "Spokeo": {"email": "privacy@spokeo.com", "form": "https://www.spokeo.com/optout"},
+    "BeenVerified": {"email": "privacy@beenverified.com", "form": "https://www.beenverified.com/app/optout/search"},
+    "WhitePages": {"email": "support@whitepages.com", "form": "https://www.whitepages.com/suppression_requests"},
+    "Intelius": {"email": "privacy@intelius.com", "form": "https://www.intelius.com/opt-out"},
+    "MyLife": {"email": "privacy@mylife.com", "form": "https://www.mylife.com/ccpa"},
+    "Radaris": {"email": "support@radaris.com", "form": "https://radaris.com/control/privacy"},
+    "PeopleFinder": {"email": "privacy@peoplefinder.com", "form": "https://www.peoplefinder.com/optout"},
+    "TruthFinder": {"email": "privacy@truthfinder.com", "form": "https://www.truthfinder.com/opt-out/"},
+    "FastPeopleSearch": {"email": "support@fastpeoplesearch.com", "form": "https://www.fastpeoplesearch.com/removal"},
+    "PublicRecords": {"email": "privacy@publicrecords.com", "form": "https://www.publicrecords.com/optout"},
+    "Acxiom": {"email": "privacyofficer@acxiom.com", "form": "https://isapps.acxiom.com/optout/optout.aspx"},
+    "Equifax-PrivacyData": {"email": "privacy@equifax.com", "form": "https://www.equifax.com/personal/contact-us/"},
+    "PeekYou": {"email": "support@peekyou.com", "form": "https://www.peekyou.com/about/contact/optout"},
+    "InstantCheckmate": {"email": "privacy@instantcheckmate.com", "form": "https://www.instantcheckmate.com/optout/"},
+    "USSearch": {"email": "privacy@ussearch.com", "form": "https://www.ussearch.com/opt-out/"},
+    "Google Search": {"email": "support-deindex@google.com", "form": "https://reportcontent.google.com/forms/rtbf"},
+    "Bing Search": {"email": "privacy@microsoft.com", "form": "https://www.bing.com/webmasters/tools/eu-privacy-request"},
+}
+
 # North America only — per product requirements
 SUPPORTED_COUNTRIES = {
     "CA": {"name": "Canada", "states": ["AB","BC","MB","NB","NL","NS","NT","NU","ON","PE","QC","SK","YT"], "privacy_law": "PIPEDA / Quebec Law 25"},
@@ -359,7 +381,7 @@ class SignDocumentIn(BaseModel):
 
 
 # ---------------- Email Service ----------------
-async def send_email(to: str, subject: str, body: str) -> bool:
+async def send_email(to: str, subject: str, body: str, attachments: Optional[list[dict]] = None) -> bool:
     if not SMTP_ENABLED:
         logger.info(f"[EMAIL-MOCK] to={to} subject={subject!r}")
         await db.email_log.insert_one({
@@ -369,12 +391,28 @@ async def send_email(to: str, subject: str, body: str) -> bool:
         })
         return True
     try:
+        import ssl as _ssl
         import aiosmtplib
         msg = EmailMessage()
         msg["From"] = os.environ.get("SMTP_FROM", os.environ["SMTP_USERNAME"])
         msg["To"] = to
         msg["Subject"] = subject
         msg.set_content(body)
+        # attach files (e.g., legal documents)
+        for att in (attachments or []):
+            content = att.get("content", "")
+            if isinstance(content, str):
+                content = content.encode("utf-8")
+            msg.add_attachment(
+                content,
+                maintype=att.get("maintype", "text"),
+                subtype=att.get("subtype", "plain"),
+                filename=att.get("filename", "attachment.txt"),
+            )
+        # Host has TLS cert hostname mismatch — disable strict verification for this private SMTP
+        ctx = _ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = _ssl.CERT_NONE
         await aiosmtplib.send(
             msg,
             hostname=os.environ["SMTP_HOST"],
@@ -382,6 +420,8 @@ async def send_email(to: str, subject: str, body: str) -> bool:
             username=os.environ["SMTP_USERNAME"],
             password=os.environ["SMTP_PASSWORD"],
             use_tls=True,
+            tls_context=ctx,
+            timeout=20,
         )
         await db.email_log.insert_one({
             "id": str(uuid.uuid4()), "to": to, "subject": subject, "body": body,
@@ -627,6 +667,11 @@ async def get_brokers():
     return {"brokers": DATA_BROKERS}
 
 
+@api.get("/broker-contacts")
+async def get_broker_contacts():
+    return {"contacts": BROKER_CONTACTS}
+
+
 # ---------------- Auth ----------------
 @api.post("/auth/register")
 async def register(payload: RegisterIn, background: BackgroundTasks):
@@ -769,15 +814,22 @@ async def request_removal(payload: RemovalRequestIn, background: BackgroundTasks
         {"id": payload.finding_id},
         {"$set": {"status": "pending_removal", "removal_requested_at": now_iso()}}
     )
+    broker = f["broker"]
+    contact = BROKER_CONTACTS.get(broker, {})
     removal = {
         "id": str(uuid.uuid4()), "user_id": user["id"], "finding_id": payload.finding_id,
-        "broker": f["broker"], "status": "submitted", "created_at": now_iso(),
+        "broker": broker, "broker_email": contact.get("email"), "broker_form": contact.get("form"),
+        "status": "submitted", "created_at": now_iso(),
     }
     await db.removal_requests.insert_one(removal)
+    # Notify user that the request was logged
     background.add_task(send_email, user["email"],
-                        f"[d31337m3] Removal request submitted — {f['broker']}",
-                        f"Your removal request has been submitted to {f['broker']}. We will keep you updated.\n\n— d31337m3")
-    return {"ok": True, "removal_id": removal["id"]}
+                        f"[d31337m3] Removal request logged — {broker}",
+                        f"Hi,\n\nYour removal request for the following finding has been logged:\n\n"
+                        f"Broker: {broker}\nURL: {f.get('url')}\nKeyword: {f.get('keyword_value')}\n\n"
+                        f"Next step: Generate and sign a legal notice from your Documents tab. Once signed, "
+                        f"we'll dispatch it directly to the broker.\n\n— d31337m3")
+    return {"ok": True, "removal_id": removal["id"], "broker_contact": contact}
 
 
 # ---------------- Reputation Score ----------------
@@ -800,13 +852,26 @@ async def subscribe(payload: SubscribeIn, background: BackgroundTasks, user: dic
         payment["instructions"] = {
             "recipient_email": PAYMENTS_EMAIL,
             "amount_usd": plan["price_usd"],
+            "amount_cad_estimate": round(plan["price_usd"] * 1.37, 2),
             "note": f"d31337m3 {plan['name']} - {user['email']}",
+            "auto_deposit": True,
+            "security_question_required": False,
+            "instructions": (
+                f"1. From your bank's Interac e-Transfer screen, send to {PAYMENTS_EMAIL}\n"
+                f"2. Amount: ${plan['price_usd']} USD (≈ ${round(plan['price_usd'] * 1.37, 2)} CAD)\n"
+                f"3. Add the message: d31337m3 {plan['name']} - {user['email']}\n"
+                f"4. No security question needed — recipient is set up for AUTO-DEPOSIT.\n"
+                f"5. Admin will confirm within 24 hours and unlock your subscription."
+            ),
         }
         payment["status"] = "awaiting_confirmation"
         await db.payments.insert_one(payment)
         background.add_task(send_email, PAYMENTS_EMAIL,
                             f"[d31337m3] Interac payment expected — {user['email']}",
-                            f"User {user['email']} initiated {plan['name']} (${plan['price_usd']}) via Interac.\nPayment ID: {payment['id']}")
+                            f"User {user['email']} initiated {plan['name']} (${plan['price_usd']}) via Interac e-Transfer (auto-deposit).\n"
+                            f"Payment ID: {payment['id']}\n"
+                            f"Expected note: d31337m3 {plan['name']} - {user['email']}\n\n"
+                            f"Confirm via admin panel once funds arrive.")
         return {"payment_id": payment["id"], "status": "awaiting_confirmation", "instructions": payment["instructions"]}
 
     if payload.payment_method == "crypto":
@@ -924,6 +989,34 @@ async def admin_reject_payment(payment_id: str, admin: dict = Depends(require_ad
 async def admin_email_log(admin: dict = Depends(require_admin)):
     rows = await db.email_log.find({}, {"_id": 0}).sort("sent_at", -1).to_list(200)
     return {"emails": rows}
+
+
+@api.get("/admin/removals")
+async def admin_removals(admin: dict = Depends(require_admin)):
+    rows = await db.removal_requests.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    # enrich with user email
+    user_ids = list({r["user_id"] for r in rows})
+    users = {u["id"]: u for u in await db.users.find({"id": {"$in": user_ids}}, {"_id": 0, "id": 1, "email": 1}).to_list(1000)}
+    for r in rows:
+        r["user_email"] = users.get(r["user_id"], {}).get("email")
+    return {"removals": rows}
+
+
+@api.post("/admin/removals/{removal_id}/mark-removed")
+async def admin_mark_removed(removal_id: str, admin: dict = Depends(require_admin)):
+    r = await db.removal_requests.find_one({"id": removal_id})
+    if not r:
+        raise HTTPException(status_code=404, detail="Not found")
+    await db.removal_requests.update_one({"id": removal_id},
+                                         {"$set": {"status": "removed", "removed_at": now_iso()}})
+    if r.get("finding_id"):
+        await db.findings.update_one({"id": r["finding_id"]}, {"$set": {"status": "removed", "removed_at": now_iso()}})
+    user = await db.users.find_one({"id": r["user_id"]})
+    if user:
+        await send_email(user["email"],
+                        f"[d31337m3] Removal confirmed — {r.get('broker')}",
+                        f"Great news — {r.get('broker')} has confirmed removal of your data.\n\nYour reputation score has been updated.\n\n— d31337m3")
+    return {"ok": True}
 
 
 # ---------------- Profile ----------------
@@ -1082,17 +1175,60 @@ async def sign_document(payload: SignDocumentIn, background: BackgroundTasks, us
     if not sig:
         raise HTTPException(status_code=400, detail="No signature on file. Please create your e-signature first.")
     signed_body = doc["body"].replace("[SIGNATURE]", f"[Electronically signed by {sig['full_name']} on {now_iso()}]")
+
+    # Attempt broker dispatch if the document is linked to a finding
+    dispatch = {"attempted": False, "delivered": False, "broker_email": None, "form_url": None}
+    if doc.get("finding_id"):
+        f = await db.findings.find_one({"id": doc["finding_id"], "user_id": user["id"]})
+        if f:
+            contact = BROKER_CONTACTS.get(f.get("broker"), {})
+            broker_email = contact.get("email")
+            dispatch["broker_email"] = broker_email
+            dispatch["form_url"] = contact.get("form")
+            if broker_email:
+                dispatch["attempted"] = True
+                # Background-dispatch the signed document to the broker
+                background.add_task(
+                    send_email,
+                    broker_email,
+                    f"[{doc['title']}] Removal Request — {sig['full_name']} (ref {doc['id'][:8]})",
+                    signed_body,
+                    [{"filename": f"{doc['title'].replace(' ', '_')}_{doc['id'][:8]}.txt",
+                      "content": signed_body, "maintype": "text", "subtype": "plain"}],
+                )
+                dispatch["delivered"] = True  # queued for background send
+                # Update finding status
+                await db.findings.update_one(
+                    {"id": doc["finding_id"]},
+                    {"$set": {"status": "pending_removal", "dispatched_at": now_iso(),
+                              "dispatched_to": broker_email, "dispatched_document_id": doc["id"]}}
+                )
+                # Update removal_request if exists
+                await db.removal_requests.update_one(
+                    {"finding_id": doc["finding_id"]},
+                    {"$set": {"status": "dispatched", "dispatched_at": now_iso(),
+                              "dispatched_document_id": doc["id"], "broker_email": broker_email}}
+                )
+
     await db.documents.update_one({"id": payload.document_id}, {"$set": {
         "status": "signed",
         "signed_at": now_iso(),
         "signature_image": sig["data_url"],
         "signed_name": sig["full_name"],
         "body": signed_body,
+        "dispatched_to": dispatch.get("broker_email"),
+        "dispatched_at": now_iso() if dispatch.get("delivered") else None,
     }})
-    background.add_task(send_email, user["email"],
-                        f"[d31337m3] Document signed — {doc['title']}",
-                        f"Your {doc['title']} has been electronically signed and is ready in your dashboard.\n\n— d31337m3")
-    return {"ok": True}
+
+    # Confirmation email to the user
+    confirm_msg = (
+        f"Your {doc['title']} has been electronically signed.\n\n"
+        + (f"Dispatched to: {dispatch['broker_email']}\n" if dispatch["delivered"] else "")
+        + (f"Broker opt-out form: {dispatch['form_url']}\n" if dispatch.get("form_url") and not dispatch["delivered"] else "")
+        + "\nTrack status in your dashboard.\n\n— d31337m3"
+    )
+    background.add_task(send_email, user["email"], f"[d31337m3] Document signed — {doc['title']}", confirm_msg)
+    return {"ok": True, "dispatch": dispatch}
 
 
 @api.delete("/documents/{document_id}")

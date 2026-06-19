@@ -83,10 +83,18 @@ export default function Documents() {
 
   const sign = async (id) => {
     try {
-      await api.post("/documents/sign", { document_id: id });
-      const r = await api.get(`/documents/${id}`);
-      setViewing(r.data.document);
+      const r = await api.post("/documents/sign", { document_id: id });
+      const fresh = await api.get(`/documents/${id}`);
+      setViewing(fresh.data.document);
       load();
+      const d = r.data.dispatch || {};
+      if (d.delivered && d.broker_email) {
+        alert(`✓ Signed & dispatched to ${d.broker_email}`);
+      } else if (d.form_url) {
+        alert(`✓ Signed. This broker requires manual submission via their opt-out form:\n${d.form_url}`);
+      } else {
+        alert("✓ Document signed.");
+      }
     } catch (e) { alert(e.response?.data?.detail || "Failed"); }
   };
 

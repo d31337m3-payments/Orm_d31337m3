@@ -130,8 +130,17 @@ export default function Billing() {
                         {copied==="email" ? <CheckCircle2 size={14} className="text-[#00FF41]"/> : <Copy size={14} className="text-zinc-400 hover:text-white"/>}
                       </button>
                     </div>
-                    <div className="font-mono text-xs text-zinc-500 mt-2">Amount: <span className="text-white">${result.instructions.amount_usd}</span></div>
-                    <div className="font-mono text-xs text-zinc-500">Note: <span className="text-white">{result.instructions.note}</span></div>
+                    <div className="font-mono text-xs text-zinc-500 mt-2">Amount: <span className="text-white">${result.instructions.amount_usd} USD</span> {result.instructions.amount_cad_estimate && <span className="text-zinc-500">(≈ ${result.instructions.amount_cad_estimate} CAD)</span>}</div>
+                    <div className="font-mono text-xs text-zinc-500">Note / Memo: <span className="text-white">{result.instructions.note}</span></div>
+                    {result.instructions.auto_deposit && (
+                      <div className="mt-3 border-l-2 border-[#00FF41] pl-3 py-1 bg-[#0a1f0a]/30">
+                        <div className="font-mono text-xs text-[#00FF41] font-bold">✓ AUTO-DEPOSIT ENABLED</div>
+                        <div className="font-mono text-xs text-zinc-400 mt-1">No security question required. Funds settle automatically.</div>
+                      </div>
+                    )}
+                    {result.instructions.instructions && (
+                      <pre className="mt-3 font-mono text-xs text-zinc-300 whitespace-pre-wrap border border-[#222] p-3 bg-black">{result.instructions.instructions}</pre>
+                    )}
                   </div>
                 )}
                 {result.instructions.wallet && (

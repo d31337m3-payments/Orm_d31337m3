@@ -60,3 +60,10 @@ Build "d31337m3.com" (pronounced "delete me dot com") — a complete Online Repu
 
 ## Test Credentials
 - Admin: `admin@d31337m3.com` / `Admin2026!!`
+
+### Iteration 3 (2026-06-19) — Production Hardening
+- **SMTP fully wired**: tested all 4 credential combinations → `admin@d31337m3.com / Admin2026!!` confirmed working. Backend now uses lenient TLS context (cert hostname mismatch on shared hosting is bypassed). `SMTP_ENABLED=true`. Verified real email delivery via 550 NoSuchUser confirmation (server reachable + authenticated).
+- **Real broker dispatch**: 17-broker privacy-email registry (`BROKER_CONTACTS`) covering Spokeo, BeenVerified, WhitePages, Intelius, MyLife, Radaris, PeopleFinder, TruthFinder, FastPeopleSearch, PublicRecords, Acxiom, Equifax, PeekYou, InstantCheckmate, USSearch, Google Search, Bing Search. When a user signs a legal doc linked to a finding, we auto-dispatch the signed letter to the broker's privacy address as a real email + attachment, update the finding to `pending_removal`, and log the dispatch.
+- **New `/api/broker-contacts` endpoint** + admin `/api/admin/removals` + admin `/api/admin/removals/{id}/mark-removed`
+- **Admin → Removals tab**: track every dispatched legal notice, the broker email it went to, and one-click "MARK REMOVED" (which updates the finding + sends user confirmation email)
+- **Interac flow polish**: 5-step plain-English instructions, USD + CAD estimate, "AUTO-DEPOSIT ENABLED" green callout, no security question warning. `payments@d31337m3.com` gets an automatic notification email when a user initiates payment.

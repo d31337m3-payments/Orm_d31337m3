@@ -15,20 +15,23 @@ export default function Admin() {
   const [users, setUsers] = useState([]);
   const [payments, setPayments] = useState([]);
   const [emails, setEmails] = useState([]);
+  const [removals, setRemovals] = useState([]);
 
   const load = async () => {
-    const [s, u, p, e] = await Promise.all([
+    const [s, u, p, e, r] = await Promise.all([
       api.get("/admin/stats"),
       api.get("/admin/users"),
       api.get("/admin/payments"),
       api.get("/admin/email-log"),
+      api.get("/admin/removals"),
     ]);
-    setStats(s.data); setUsers(u.data.users); setPayments(p.data.payments); setEmails(e.data.emails);
+    setStats(s.data); setUsers(u.data.users); setPayments(p.data.payments); setEmails(e.data.emails); setRemovals(r.data.removals);
   };
   useEffect(() => { load(); }, []);
 
   const confirm = async (id) => { await api.post(`/admin/payments/${id}/confirm`); load(); };
   const reject = async (id) => { await api.post(`/admin/payments/${id}/reject`); load(); };
+  const markRemoved = async (id) => { await api.post(`/admin/removals/${id}/mark-removed`); load(); };
 
   if (!stats) return <DashboardLayout title="Admin"><div className="font-mono">loading<span className="blink">_</span></div></DashboardLayout>;
 
@@ -45,7 +48,7 @@ export default function Admin() {
       </div>
 
       <div className="flex gap-2 mb-4" data-testid="admin-tabs">
-        {[["payments","Payments"],["users","Users"],["emails","Email Log"]].map(([k,l]) => (
+        {[["payments","Payments"],["removals","Removals"],["users","Users"],["emails","Email Log"]].map(([k,l]) => (
           <button key={k} onClick={()=>setTab(k)} data-testid={`admin-tab-${k}`}
             className={`font-mono text-xs px-4 py-2 border ${tab===k ? "border-white text-white" : "border-[#222] text-zinc-500 hover:text-white"}`}>
             {l.toUpperCase()}
@@ -114,6 +117,36 @@ export default function Admin() {
                   <td className="py-3 font-mono text-xs">{e.to}</td>
                   <td className="py-3 font-mono text-sm">{e.subject}</td>
                   <td className="py-3 font-mono text-xs">{e.mocked ? "MOCKED" : e.delivered ? "SENT" : "FAILED"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {tab === "removals" && (
+        <div className="brutal-card p-6">
+          <table className="w-full" data-testid="admin-removals-table">
+            <thead><tr className="border-b border-[#222]">{["Created","User","Broker","Dispatched To","Status","Action"].map(h=><th key={h} className="overline text-left py-2">{h}</th>)}</tr></thead>
+            <tbody>
+              {removals.length === 0 ? (
+                <tr><td colSpan={6} className="py-6 font-mono text-zinc-500">No removal requests yet.</td></tr>
+              ) : removals.map(r => (
+                <tr key={r.id} className="border-b border-[#222]">
+                  <td className="py-3 font-mono text-xs text-zinc-500">{r.created_at?.slice(0,16)}</td>
+                  <td className="py-3 font-mono text-xs">{r.user_email}</td>
+                  <td className="py-3 font-mono text-sm">{r.broker}</td>
+                  <td className="py-3 font-mono text-xs text-zinc-400">{r.broker_email || "—"}</td>
+                  <td className="py-3 font-mono text-xs">
+                    {r.status === "removed" ? <span className="text-[#00FF41]">REMOVED</span>
+                      : r.status === "dispatched" ? <span className="text-[#FFD700]">DISPATCHED</span>
+                      : <span className="text-zinc-400">{r.status?.toUpperCase()}</span>}
+                  </td>
+                  <td className="py-3">
+                    {r.status !== "removed" && (
+                      <button onClick={()=>markRemoved(r.id)} data-testid={`mark-removed-${r.id}`} className="font-mono text-xs text-[#00FF41] hover:text-white">MARK REMOVED</button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
