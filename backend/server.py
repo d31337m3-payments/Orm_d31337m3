@@ -56,6 +56,188 @@ DATA_BROKERS = [
     "InstantCheckmate", "USSearch",
 ]
 
+# North America only — per product requirements
+SUPPORTED_COUNTRIES = {
+    "CA": {"name": "Canada", "states": ["AB","BC","MB","NB","NL","NS","NT","NU","ON","PE","QC","SK","YT"], "privacy_law": "PIPEDA / Quebec Law 25"},
+    "US": {"name": "United States", "states": ["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC"], "privacy_law": "CCPA / CPRA / State Privacy Laws"},
+    "MX": {"name": "México", "states": ["AGU","BCN","BCS","CAM","CHP","CHH","COA","COL","CMX","DUR","GUA","GRO","HID","JAL","MEX","MIC","MOR","NAY","NLE","OAX","PUE","QUE","ROO","SLP","SIN","SON","TAB","TAM","TLA","VER","YUC","ZAC"], "privacy_law": "LFPDPPP"},
+}
+
+# Legal document templates (text bodies w/ placeholders)
+LEGAL_TEMPLATES = {
+    "dmca_takedown": {
+        "id": "dmca_takedown",
+        "title": "DMCA Takedown Notice",
+        "summary": "Formal copyright takedown demand under the U.S. Digital Millennium Copyright Act.",
+        "jurisdictions": ["US"],
+        "body": """{date}
+
+To: {recipient_broker} — Designated DMCA Agent
+{recipient_address}
+
+Re: Notice of Copyright Infringement Pursuant to 17 U.S.C. § 512(c)
+
+Dear DMCA Agent,
+
+I, {user_name}, am the rightful owner of the material identified below and hereby submit this notice under the Digital Millennium Copyright Act (DMCA), 17 U.S.C. § 512(c)(3).
+
+1. Identification of copyrighted work claimed to have been infringed:
+   Personally identifiable information and biographical content owned by {user_name}.
+
+2. Identification of the material that is claimed to be infringing:
+   {finding_url}
+   Content: {finding_data}
+
+3. My contact information:
+   Name: {user_name}
+   Email: {user_email}
+   Address: {user_address}
+   Phone: {user_phone}
+
+4. Good faith statement:
+   I have a good faith belief that the use of the material described above is not authorized by me, the copyright owner, my agent, or the law.
+
+5. Statement of accuracy and authority:
+   The information in this notification is accurate, and under penalty of perjury, I am the owner, or authorized to act on behalf of the owner, of an exclusive right that is allegedly infringed.
+
+Please remove or disable access to the infringing material within forty-eight (48) hours.
+
+Signed,
+
+[SIGNATURE]
+
+{user_name}
+{date}
+""",
+    },
+    "cease_and_desist": {
+        "id": "cease_and_desist",
+        "title": "Cease & Desist Letter",
+        "summary": "Formal demand to stop publication, distribution, or sale of personal data.",
+        "jurisdictions": ["US","CA","MX"],
+        "body": """{date}
+
+VIA EMAIL & CERTIFIED MAIL
+
+To: {recipient_broker}
+{recipient_address}
+
+Re: CEASE AND DESIST — Unauthorized Use of Personal Information of {user_name}
+
+Dear Sir or Madam,
+
+This letter serves as formal demand that {recipient_broker} (the "Company") immediately CEASE AND DESIST from the collection, publication, distribution, sale, or any further processing of the personal information of {user_name} (the "Data Subject").
+
+The Company is currently publishing the following information without lawful basis or consent:
+   URL: {finding_url}
+   Data exposed: {finding_data}
+
+Such conduct constitutes a violation of applicable privacy and data protection laws in {country_name}, including but not limited to {privacy_law}.
+
+The Data Subject hereby demands that within fourteen (14) calendar days of receipt of this notice, the Company:
+
+   (a) Permanently remove all personal information of the Data Subject from its databases, indexes, and any affiliated properties;
+   (b) Confirm in writing the deletion of said information;
+   (c) Cease the sale, sharing, or onward transfer of any such information to third parties;
+   (d) Identify all third parties to whom such information has been disclosed within the past twenty-four (24) months.
+
+Failure to comply will leave the Data Subject no choice but to pursue all available legal remedies, including but not limited to statutory damages, injunctive relief, and recovery of legal fees.
+
+Govern yourself accordingly.
+
+Signed,
+
+[SIGNATURE]
+
+{user_name}
+{user_address}
+{user_email}
+""",
+    },
+    "privacy_removal_request": {
+        "id": "privacy_removal_request",
+        "title": "Privacy Removal Request",
+        "summary": "Jurisdiction-aware data deletion request (CCPA/CPRA, PIPEDA/Law 25, or LFPDPPP).",
+        "jurisdictions": ["US","CA","MX"],
+        "body": """{date}
+
+To: {recipient_broker} — Privacy / Data Protection Office
+{recipient_address}
+
+Re: FORMAL DATA SUBJECT REQUEST — Deletion & Opt-Out — {user_name}
+
+Dear Privacy Officer,
+
+Pursuant to {privacy_law}, applicable in {country_name}{state_clause}, I, {user_name}, the data subject, hereby submit a verifiable consumer request for the following:
+
+   1. DELETION of all personal information that {recipient_broker} has collected about me, including but not limited to: full name, addresses, telephone numbers, email addresses, age, relatives, household members, employment, and any inferences drawn therefrom.
+
+   2. OPT-OUT of the sale, sharing, or onward disclosure of my personal information.
+
+   3. CONFIRMATION in writing that the above has been completed within the statutory window.
+
+Identifying information to enable verification:
+   Full Name: {user_name}
+   Email: {user_email}
+   Address: {user_address}
+   Phone: {user_phone}
+
+Reference exposure detected at: {finding_url}
+Categories of data exposed: {finding_data}
+
+I expect a response within the statutory period applicable in my jurisdiction. Should the request be denied, please cite the specific legal basis for denial.
+
+Thank you.
+
+Signed,
+
+[SIGNATURE]
+
+{user_name}
+{date}
+""",
+    },
+    "right_to_be_forgotten": {
+        "id": "right_to_be_forgotten",
+        "title": "Right to be Forgotten — Search Engine De-indexing",
+        "summary": "Request to search engines (Google/Bing) to de-index URLs surfacing your personal data.",
+        "jurisdictions": ["CA","US","MX"],
+        "body": """{date}
+
+To: Legal Removals Team
+Search Engine: {recipient_broker}
+
+Re: Request for URL De-indexing of Personal Information — {user_name}
+
+Dear Legal Removals Team,
+
+I, {user_name}, a resident of {country_name}{state_clause}, respectfully request the de-indexing of the following URL(s) from your search results, as they surface my personal information without lawful basis and against my expressed will:
+
+   URL: {finding_url}
+   Data surfaced: {finding_data}
+
+The continued surfacing of this content causes:
+   • Demonstrable harm to my privacy and reputation;
+   • Exposure to fraud, harassment, and identity theft;
+   • Violation of applicable privacy law: {privacy_law}.
+
+Identifying information:
+   Full Name: {user_name}
+   Email: {user_email}
+   Address: {user_address}
+
+Kindly de-index the listed URL(s) from search results returned for queries containing my name and confirm completion in writing.
+
+Signed,
+
+[SIGNATURE]
+
+{user_name}
+{date}
+""",
+    },
+}
+
 # ---------------- FastAPI ----------------
 app = FastAPI(title="d31337m3 API")
 api = APIRouter(prefix="/api")
@@ -152,6 +334,30 @@ class ScanRequestIn(BaseModel):
     keyword_id: Optional[str] = None  # if None, scans all user keywords
 
 
+class ProfileIn(BaseModel):
+    name: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    country: Optional[Literal["US", "CA", "MX"]] = None
+    state: Optional[str] = None
+
+
+class SignatureIn(BaseModel):
+    data_url: str  # base64 PNG image data URL from canvas
+    full_name: str
+
+
+class GenerateDocumentIn(BaseModel):
+    template_id: Literal["dmca_takedown", "cease_and_desist", "privacy_removal_request", "right_to_be_forgotten"]
+    finding_id: Optional[str] = None
+    recipient_broker: Optional[str] = None
+    recipient_address: Optional[str] = None
+
+
+class SignDocumentIn(BaseModel):
+    document_id: str
+
+
 # ---------------- Email Service ----------------
 async def send_email(to: str, subject: str, body: str) -> bool:
     if not SMTP_ENABLED:
@@ -220,37 +426,59 @@ async def compute_reputation_score(user_id: str) -> dict:
 # ---------------- Scraper (real HTTP + realistic enrichment) ----------------
 async def real_scrape_for_keyword(keyword_value: str, kw_type: str) -> list[dict]:
     """
-    Performs a real HTTP probe across data broker URLs to detect potential matches.
-    For sites that block bots, we fall back to realistic structured findings so the
-    end-to-end demo flow works while preserving real-crawl semantics.
+    Performs a real HTTP probe across data broker URLs + Google & Bing search results
+    to detect potential matches. For sites that block bots, we fall back to realistic
+    structured findings so the end-to-end demo flow works.
     """
     import aiohttp
+    from urllib.parse import quote_plus
 
+    q = quote_plus(keyword_value)
     probe_urls = [
-        ("Spokeo", f"https://www.spokeo.com/search?q={keyword_value.replace(' ', '+')}"),
+        ("Spokeo", f"https://www.spokeo.com/search?q={q}"),
         ("WhitePages", f"https://www.whitepages.com/name/{keyword_value.replace(' ', '-')}"),
         ("FastPeopleSearch", f"https://www.fastpeoplesearch.com/name/{keyword_value.replace(' ', '-')}"),
+        ("Bing", f"https://www.bing.com/search?q=%22{q}%22"),
+        ("Google", f"https://www.google.com/search?q=%22{q}%22"),
     ]
     findings: list[dict] = []
     headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
     }
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8), headers=headers) as session:
         for broker, url in probe_urls:
             try:
                 async with session.get(url, allow_redirects=True) as r:
                     body = await r.text()
-                    if r.status == 200 and keyword_value.lower().split()[0] in body.lower():
+                    needle = keyword_value.lower().split()[0]
+                    # For search engines, count occurrences as proxy for mentions
+                    if broker in ("Google", "Bing"):
                         soup = BeautifulSoup(body, "lxml")
-                        title = (soup.title.text.strip() if soup.title else "")[:120]
-                        findings.append({
-                            "broker": broker,
-                            "url": url,
-                            "data_found": [kw_type, "public_listing"],
-                            "severity": random.choice(["medium", "high"]),
-                            "snippet": title or f"Match for '{keyword_value}'",
-                            "source": "real_crawl",
-                        })
+                        text = soup.get_text(" ", strip=True).lower()
+                        hits = text.count(needle)
+                        if hits >= 1:
+                            findings.append({
+                                "broker": f"{broker} Search",
+                                "url": url,
+                                "data_found": [kw_type, "search_indexed", f"{hits} mentions"],
+                                "severity": "high" if hits >= 5 else "medium",
+                                "snippet": f"{broker} search returned {hits} indexed mentions of '{keyword_value}'",
+                                "source": "real_search_crawl",
+                            })
+                    else:
+                        if r.status == 200 and needle in body.lower():
+                            soup = BeautifulSoup(body, "lxml")
+                            title = (soup.title.text.strip() if soup.title else "")[:120]
+                            findings.append({
+                                "broker": broker,
+                                "url": url,
+                                "data_found": [kw_type, "public_listing"],
+                                "severity": random.choice(["medium", "high"]),
+                                "snippet": title or f"Match for '{keyword_value}'",
+                                "source": "real_crawl",
+                            })
             except Exception as e:
                 logger.warning(f"crawl miss {broker}: {e}")
 
@@ -419,7 +647,23 @@ async def register(payload: RegisterIn, background: BackgroundTasks):
         "created_at": now_iso(),
     }
     await db.users.insert_one(user)
-    background.add_task(send_email, email, "Welcome to d31337m3", f"Hi {user['name']},\n\nYour account is ready. Start by adding keywords to monitor in your dashboard.\n\nhttps://d31337m3.com/dashboard\n\n— d31337m3")
+    # Auto-seed Canadian profile for new users
+    await db.profiles.insert_one({
+        "user_id": user["id"], "name": user["name"], "address": "", "phone": "",
+        "country": "CA", "state": "ON", "updated_at": now_iso(),
+    })
+    # Auto-add user's name as initial keyword so they get instant trial content
+    if user["name"] and len(user["name"]) >= 3 and "@" not in user["name"]:
+        kw_id = str(uuid.uuid4())
+        await db.keywords.insert_one({
+            "id": kw_id, "user_id": user["id"], "value": user["name"], "type": "name",
+            "created_at": now_iso(), "last_scan_at": None,
+        })
+        # Trigger an immediate Google/Bing + broker scan (background)
+        background.add_task(scan_and_notify, user["id"], email, [kw_id])
+
+    background.add_task(send_email, email, "Welcome to d31337m3 — Made in Canada",
+                        f"Hi {user['name']},\n\nYour account is ready. We're already running your first scan across Google, Bing, and 15+ data brokers — check your dashboard in a couple of minutes.\n\nMade with pride in Canada.\n\n— d31337m3")
     token = create_token(user["id"], False)
     return {"token": token, "user": {"id": user["id"], "email": email, "name": user["name"], "is_admin": False, "plan_id": None, "subscription_status": "trial"}}
 
@@ -680,6 +924,183 @@ async def admin_reject_payment(payment_id: str, admin: dict = Depends(require_ad
 async def admin_email_log(admin: dict = Depends(require_admin)):
     rows = await db.email_log.find({}, {"_id": 0}).sort("sent_at", -1).to_list(200)
     return {"emails": rows}
+
+
+# ---------------- Profile ----------------
+@api.get("/profile")
+async def get_profile(user: dict = Depends(get_current_user)):
+    profile = await db.profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {
+        "user_id": user["id"], "name": user.get("name"), "address": "", "phone": "",
+        "country": "CA", "state": "ON",
+    }
+    return {"profile": profile}
+
+
+@api.put("/profile")
+async def update_profile(payload: ProfileIn, user: dict = Depends(get_current_user)):
+    update = {k: v for k, v in payload.model_dump().items() if v is not None}
+    update["user_id"] = user["id"]
+    update["updated_at"] = now_iso()
+    await db.profiles.update_one({"user_id": user["id"]}, {"$set": update}, upsert=True)
+    if payload.name:
+        await db.users.update_one({"id": user["id"]}, {"$set": {"name": payload.name}})
+    return {"ok": True, "profile": update}
+
+
+# ---------------- Countries ----------------
+@api.get("/countries")
+async def get_countries():
+    return {"countries": SUPPORTED_COUNTRIES}
+
+
+# ---------------- E-Signature ----------------
+@api.get("/signature")
+async def get_signature(user: dict = Depends(get_current_user)):
+    sig = await db.signatures.find_one({"user_id": user["id"]}, {"_id": 0})
+    return {"signature": sig}
+
+
+@api.post("/signature")
+async def save_signature(payload: SignatureIn, user: dict = Depends(get_current_user)):
+    if not payload.data_url.startswith("data:image/"):
+        raise HTTPException(status_code=400, detail="Invalid signature image")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "data_url": payload.data_url,
+        "full_name": payload.full_name,
+        "created_at": now_iso(),
+        "ip": None,
+    }
+    # Replace existing
+    await db.signatures.delete_many({"user_id": user["id"]})
+    await db.signatures.insert_one(doc)
+    return {"ok": True, "signature": {k: v for k, v in doc.items() if k != "_id"}}
+
+
+# ---------------- Legal Documents ----------------
+@api.get("/documents/templates")
+async def get_doc_templates(user: dict = Depends(get_current_user)):
+    profile = await db.profiles.find_one({"user_id": user["id"]}) or {}
+    user_country = profile.get("country", "CA")
+    templates = [
+        {"id": t["id"], "title": t["title"], "summary": t["summary"], "jurisdictions": t["jurisdictions"],
+         "available": user_country in t["jurisdictions"]}
+        for t in LEGAL_TEMPLATES.values()
+    ]
+    return {"templates": templates, "user_country": user_country}
+
+
+def _fill_template(template_id: str, ctx: dict) -> str:
+    tpl = LEGAL_TEMPLATES[template_id]["body"]
+    safe = {k: (v if v is not None else "") for k, v in ctx.items()}
+    for k in ["user_name", "user_email", "user_address", "user_phone",
+              "recipient_broker", "recipient_address", "finding_url", "finding_data",
+              "date", "country_name", "privacy_law", "state_clause"]:
+        safe.setdefault(k, "")
+    return tpl.format(**safe)
+
+
+@api.post("/documents/generate")
+async def generate_document(payload: GenerateDocumentIn, user: dict = Depends(get_current_user)):
+    tpl = LEGAL_TEMPLATES.get(payload.template_id)
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    profile = await db.profiles.find_one({"user_id": user["id"]}) or {}
+    country = profile.get("country", "CA")
+    if country not in tpl["jurisdictions"]:
+        raise HTTPException(status_code=400, detail=f"{tpl['title']} is not available in {SUPPORTED_COUNTRIES.get(country, {}).get('name', country)}")
+    if country not in SUPPORTED_COUNTRIES:
+        raise HTTPException(status_code=400, detail="Country must be Canada, United States, or Mexico")
+
+    state = profile.get("state")
+    finding_url = ""
+    finding_data = ""
+    recipient_broker = payload.recipient_broker or "Recipient"
+    if payload.finding_id:
+        f = await db.findings.find_one({"id": payload.finding_id, "user_id": user["id"]})
+        if f:
+            finding_url = f.get("url", "")
+            finding_data = ", ".join(f.get("data_found", []))
+            recipient_broker = payload.recipient_broker or f.get("broker", "Recipient")
+
+    ctx = {
+        "user_name": profile.get("name") or user.get("name") or user["email"],
+        "user_email": user["email"],
+        "user_address": profile.get("address", "[address on file]"),
+        "user_phone": profile.get("phone", "[phone on file]"),
+        "recipient_broker": recipient_broker,
+        "recipient_address": payload.recipient_address or "[Recipient Address]",
+        "finding_url": finding_url or "[URL on file]",
+        "finding_data": finding_data or "[Personal data exposed]",
+        "date": datetime.now(timezone.utc).strftime("%B %d, %Y"),
+        "country_name": SUPPORTED_COUNTRIES[country]["name"],
+        "privacy_law": SUPPORTED_COUNTRIES[country]["privacy_law"],
+        "state_clause": f", state/province of {state}" if state else "",
+    }
+    body = _fill_template(payload.template_id, ctx)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "template_id": payload.template_id,
+        "title": tpl["title"],
+        "recipient_broker": recipient_broker,
+        "finding_id": payload.finding_id,
+        "country": country,
+        "body": body,
+        "status": "draft",
+        "signed_at": None,
+        "signature_image": None,
+        "signed_name": None,
+        "created_at": now_iso(),
+    }
+    await db.documents.insert_one(doc)
+    return {"document": {k: v for k, v in doc.items() if k != "_id"}}
+
+
+@api.get("/documents")
+async def list_documents(user: dict = Depends(get_current_user)):
+    rows = await db.documents.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return {"documents": rows}
+
+
+@api.get("/documents/{document_id}")
+async def get_document(document_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.documents.find_one({"id": document_id, "user_id": user["id"]}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"document": doc}
+
+
+@api.post("/documents/sign")
+async def sign_document(payload: SignDocumentIn, background: BackgroundTasks, user: dict = Depends(get_current_user)):
+    doc = await db.documents.find_one({"id": payload.document_id, "user_id": user["id"]})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    sig = await db.signatures.find_one({"user_id": user["id"]})
+    if not sig:
+        raise HTTPException(status_code=400, detail="No signature on file. Please create your e-signature first.")
+    signed_body = doc["body"].replace("[SIGNATURE]", f"[Electronically signed by {sig['full_name']} on {now_iso()}]")
+    await db.documents.update_one({"id": payload.document_id}, {"$set": {
+        "status": "signed",
+        "signed_at": now_iso(),
+        "signature_image": sig["data_url"],
+        "signed_name": sig["full_name"],
+        "body": signed_body,
+    }})
+    background.add_task(send_email, user["email"],
+                        f"[d31337m3] Document signed — {doc['title']}",
+                        f"Your {doc['title']} has been electronically signed and is ready in your dashboard.\n\n— d31337m3")
+    return {"ok": True}
+
+
+@api.delete("/documents/{document_id}")
+async def delete_document(document_id: str, user: dict = Depends(get_current_user)):
+    res = await db.documents.delete_one({"id": document_id, "user_id": user["id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"ok": True}
 
 
 # ---------------- App wiring ----------------
