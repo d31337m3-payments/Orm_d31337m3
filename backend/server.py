@@ -1019,6 +1019,151 @@ async def admin_mark_removed(removal_id: str, admin: dict = Depends(require_admi
     return {"ok": True}
 
 
+# ── Wave 1: User Actions ──────────────────────────────────────────────────────
+class AdminUserPatch(BaseModel):
+    is_active: Optional[bool] = None
+    is_admin: Optional[bool] = None
+    plan_id: Optional[Literal["basic", "pro", "enterprise"]] = None
+    subscription_status: Optional[Literal["trial", "active", "suspended", "cancelled"]] = None
+    name: Optional[str] = None
+
+
+class AdminResetPasswordIn(BaseModel):
+    new_password: str = Field(min_length=6)
+
+
+@api.get("/admin/users/{user_id}")
+async def admin_get_user(user_id: str, admin: dict = Depends(require_admin)):
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    # Enrich with related counts
+    user["_keywords_count"] = await db.keywords.count_documents({"user_id": user_id})
+    user["_findings_count"] = await db.findings.count_documents({"user_id": user_id})
+    user["_payments_count"] = await db.payments.count_documents({"user_id": user_id})
+    user["_documents_count"] = await db.documents.count_documents({"user_id": user_id})
+    user["_removals_count"] = await db.removal_requests.count_documents({"user_id": user_id})
+    return {"user": user}
+
+
+@api.patch("/admin/users/{user_id}")
+async def admin_patch_user(user_id: str, payload: AdminUserPatch, admin: dict = Depends(require_admin)):
+    if user_id == admin["id"] and payload.is_admin is False:
+        raise HTTPException(status_code=400, detail="Cannot revoke your own admin")
+    if user_id == admin["id"] and payload.is_active is False:
+        raise HTTPException(status_code=400, detail="Cannot deactivate yourself")
+    update = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not update:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    update["updated_at"] = now_iso()
+    res = await db.users.update_one({"id": user_id}, {"$set": update})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    await db.admin_audit.insert_one({
+        "id": str(uuid.uuid4()), "actor_id": admin["id"], "actor_email": admin["email"],
+        "action": "user_patch", "target_user_id": user_id, "changes": update, "at": now_iso(),
+    })
+    return {"ok": True}
+
+
+@api.delete("/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, admin: dict = Depends(require_admin)):
+    if user_id == admin["id"]:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    user = await db.users.find_one({"id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    # Cascade
+    await db.keywords.delete_many({"user_id": user_id})
+    await db.findings.delete_many({"user_id": user_id})
+    await db.payments.delete_many({"user_id": user_id})
+    await db.documents.delete_many({"user_id": user_id})
+    await db.signatures.delete_many({"user_id": user_id})
+    await db.profiles.delete_many({"user_id": user_id})
+    await db.removal_requests.delete_many({"user_id": user_id})
+    await db.scans.delete_many({"user_id": user_id})
+    await db.users.delete_one({"id": user_id})
+    await db.admin_audit.insert_one({
+        "id": str(uuid.uuid4()), "actor_id": admin["id"], "actor_email": admin["email"],
+        "action": "user_delete", "target_user_id": user_id, "target_email": user.get("email"), "at": now_iso(),
+    })
+    return {"ok": True}
+
+
+@api.post("/admin/users/{user_id}/reset-password")
+async def admin_reset_password(user_id: str, payload: AdminResetPasswordIn, admin: dict = Depends(require_admin)):
+    user = await db.users.find_one({"id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    await db.users.update_one({"id": user_id}, {"$set": {"password_hash": hash_password(payload.new_password)}})
+    await db.admin_audit.insert_one({
+        "id": str(uuid.uuid4()), "actor_id": admin["id"], "actor_email": admin["email"],
+        "action": "password_reset", "target_user_id": user_id, "target_email": user.get("email"), "at": now_iso(),
+    })
+    await send_email(user["email"], "[d31337m3] Your password was reset",
+                     "An administrator has reset your password. Please log in with the new password and change it from your profile.\n\n— d31337m3")
+    return {"ok": True}
+
+
+@api.post("/admin/users/{user_id}/scan")
+async def admin_trigger_scan(user_id: str, background: BackgroundTasks, admin: dict = Depends(require_admin)):
+    user = await db.users.find_one({"id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    background.add_task(scan_and_notify, user_id, user["email"], None)
+    await db.admin_audit.insert_one({
+        "id": str(uuid.uuid4()), "actor_id": admin["id"], "actor_email": admin["email"],
+        "action": "admin_scan", "target_user_id": user_id, "at": now_iso(),
+    })
+    return {"ok": True, "status": "queued"}
+
+
+@api.post("/admin/users/{user_id}/impersonate")
+async def admin_impersonate(user_id: str, admin: dict = Depends(require_admin)):
+    user = await db.users.find_one({"id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    token = create_token(user["id"], user.get("is_admin", False))
+    await db.admin_audit.insert_one({
+        "id": str(uuid.uuid4()), "actor_id": admin["id"], "actor_email": admin["email"],
+        "action": "impersonate", "target_user_id": user_id, "target_email": user.get("email"), "at": now_iso(),
+    })
+    return {"token": token, "user": {"id": user["id"], "email": user["email"], "name": user.get("name"),
+                                     "is_admin": user.get("is_admin", False), "plan_id": user.get("plan_id"),
+                                     "subscription_status": user.get("subscription_status")}}
+
+
+@api.get("/admin/audit-log")
+async def admin_audit_log(admin: dict = Depends(require_admin)):
+    rows = await db.admin_audit.find({}, {"_id": 0}).sort("at", -1).to_list(500)
+    return {"audit": rows}
+
+
+@api.get("/admin/payments/{payment_id}")
+async def admin_get_payment(payment_id: str, admin: dict = Depends(require_admin)):
+    p = await db.payments.find_one({"id": payment_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Not found")
+    if p.get("user_id"):
+        user = await db.users.find_one({"id": p["user_id"]}, {"_id": 0, "password_hash": 0})
+        p["_user"] = user
+    return {"payment": p}
+
+
+@api.get("/admin/removals/{removal_id}")
+async def admin_get_removal(removal_id: str, admin: dict = Depends(require_admin)):
+    r = await db.removal_requests.find_one({"id": removal_id}, {"_id": 0})
+    if not r:
+        raise HTTPException(status_code=404, detail="Not found")
+    if r.get("user_id"):
+        r["_user"] = await db.users.find_one({"id": r["user_id"]}, {"_id": 0, "password_hash": 0})
+    if r.get("finding_id"):
+        r["_finding"] = await db.findings.find_one({"id": r["finding_id"]}, {"_id": 0})
+    if r.get("dispatched_document_id"):
+        r["_document"] = await db.documents.find_one({"id": r["dispatched_document_id"]}, {"_id": 0})
+    return {"removal": r}
+
+
 # ---------------- Profile ----------------
 @api.get("/profile")
 async def get_profile(user: dict = Depends(get_current_user)):
