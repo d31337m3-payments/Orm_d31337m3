@@ -1,6 +1,6 @@
 # Orm_d31337m3
 
-A full-stack web application (Emergent-based) with a FastAPI backend and a React frontend. This repository contains the backend API, frontend UI, and deployment helpers (Nginx configuration and setup script).
+A full-stack MicroSaaS Automated Online Privacy and Reputation Management platform with a FastAPI backend and a React frontend. This repository contains the backend API, frontend UI, and deployment helpers (Nginx configuration and setup script).
 
 ## Overview
 
@@ -38,7 +38,7 @@ npm start
 
 ## Production / Deployment (NGINX)
 
-The repo includes `nginx-d31337m3.conf` and `setup-nginx.sh` to install a site into `/etc/nginx/sites-available` and enable it.
+ `setup-nginx.sh` to install a site into `/etc/nginx/sites-available` and enable it.
 
 Run as root on the target host:
 
@@ -47,7 +47,6 @@ sudo ./setup-nginx.sh
 ```
 
 This does the following:
-- Copies `nginx-d31337m3.conf` to `/etc/nginx/sites-available/d31337m3`
 - Removes the Debian default site from `/etc/nginx/sites-enabled`
 - Creates a symlink in `/etc/nginx/sites-enabled` and reloads nginx
 
