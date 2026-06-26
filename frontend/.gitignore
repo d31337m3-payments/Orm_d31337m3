@@ -7,7 +7,12 @@
 
 # testing
 /coverage
-
+/test_reports
+/memory
+/tests
+/.gitconfig
+design_guidlines.md
+test_results.md
 # production
 /build
 
@@ -17,7 +22,9 @@
 .env.development.local
 .env.test.local
 .env.production.local
-
+internal_notes.md
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+nginx-d31337m3.conf
+build_log.log
