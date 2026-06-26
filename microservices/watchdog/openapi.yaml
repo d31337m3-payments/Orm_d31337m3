@@ -1,0 +1,138 @@
+openapi: 3.0.3
+info:
+  title: Watchdog Service
+  version: 1.0.0
+  description: Observes service health and operational state
+servers:
+  - url: http://localhost:8005
+    description: Development server
+paths:
+  /health:
+    get:
+      summary: Get overall system health
+      operationId: getSystemHealth
+      responses:
+        '200':
+          description: System health status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy, degraded, unhealthy]
+                  timestamp:
+                    type: string
+                    format: date-time
+                  services:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        status:
+                          type: string
+                          enum: [healthy, degraded, unhealthy, unknown]
+                        last_check:
+                          type: string
+                          format: date-time
+                        response_time_ms:
+                          type: integer
+                        error_count:
+                          type: integer
+  /health/{service_name}:
+    get:
+      summary: Get health of specific service
+      operationId: getServiceHealth
+      parameters:
+        - in: path
+          name: service_name
+          required: true
+          schema:
+            type: string
+            enum: [client_index, payments, data_handling, auditor, watchdog, orchestrator]
+      responses:
+        '200':
+          description: Service health status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  status:
+                    type: string
+                    enum: [healthy, degraded, unhealthy, unknown]
+                  last_check:
+                    type: string
+                    format: date-time
+                  response_time_ms:
+                    type: integer
+                  error_count:
+                    type: integer
+                  details:
+                    type: object
+        '404':
+          description: Service not found
+  /alerts:
+    get:
+      summary: Get active alerts
+      operationId: getActiveAlerts
+      responses:
+        '200':
+          description: Active alerts retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  alerts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        service_name:
+                          type: string
+                        alert_type:
+                          type: string
+                          enum: [health, performance, error_rate, timeout]
+                        severity:
+                          type: string
+                          enum: [low, medium, high, critical]
+                        message:
+                          type: string
+                        triggered_at:
+                          type: string
+                          format: date-time
+                        resolved_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+        '400':
+          description: Bad request
+  /alerts/{alert_id}/resolve:
+    post:
+      summary: Resolve an alert
+      operationId: resolveAlert
+      parameters:
+        - in: path
+          name: alert_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Alert resolved
+        '404':
+          description: Alert not found
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

@@ -1,0 +1,183 @@
+openapi: 3.0.3
+info:
+  title: Orchestrator Service
+  version: 1.0.0
+  description: The ring leader that coordinates service startup, dependencies, and network access
+servers:
+  - url: http://localhost:8006
+    description: Development server
+paths:
+  /services:
+    get:
+      summary: Get all registered services
+      operationId: getRegisteredServices
+      responses:
+        '200':
+          description: List of registered services
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  services:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        status:
+                          type: string
+                          enum: [starting, running, stopping, stopped, failed]
+                        port:
+                          type: integer
+                        health_endpoint:
+                          type: string
+                        dependencies:
+                          type: array
+                          items:
+                            type: string
+                        started_at:
+                          type: string
+                          format: date-time
+                        restarted_count:
+                          type: integer
+  /services/{service_name}:
+    get:
+      summary: Get specific service info
+      operationId: getServiceInfo
+      parameters:
+        - in: path
+          name: service_name
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Service info retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  status:
+                    type: string
+                    enum: [starting, running, stopping, stopped, failed]
+                  port:
+                    type: integer
+                  health_endpoint:
+                    type: string
+                  dependencies:
+                    type: array
+                    items:
+                      type: string
+                  started_at:
+                    type: string
+                    format: date-time
+                  restarted_count:
+                    type: integer
+        '404':
+          description: Service not found
+  /services/{service_name}/start:
+    post:
+      summary: Start a service
+      operationId: startService
+      parameters:
+        - in: path
+          name: service_name
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Service started
+        '400':
+          description: Bad request
+        '409':
+          description: Service already running
+  /services/{service_name}/stop:
+    post:
+      summary: Stop a service
+      operationId: stopService
+      parameters:
+        - in: path
+          name: service_name
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Service stopped
+        '400':
+          description: Bad request
+        '409':
+          description: Service not running
+  /services/{service_name}/restart:
+    post:
+      summary: Restart a service
+      operationId: restartService
+      parameters:
+        - in: path
+          name: service_name
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Service restarted
+        '400':
+          description: Bad request
+        '409':
+          description: Service not running
+  /startup/order:
+    get:
+      summary: Get service startup order
+      operationId: getStartupOrder
+      responses:
+        '200':
+          description: Service startup order
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order:
+                    type: array
+                    items:
+                      type: string
+                  description:
+                    type: string
+        '400':
+          description: Bad request
+  /system/status:
+    get:
+      summary: Get overall system status
+      operationId: getSystemStatus
+      responses:
+        '200':
+          description: System status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orchestrator_status:
+                    type: string
+                    enum: [starting, running, stopping, stopped]
+                  services_healthy:
+                    type: integer
+                  services_total:
+                    type: integer
+                  uptime_seconds:
+                    type: integer
+                  timestamp:
+                    type: string
+                    format: date-time
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

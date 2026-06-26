@@ -1,0 +1,127 @@
+openapi: 3.0.3
+info:
+  title: Payments Service
+  version: 1.0.0
+  description: Handles all payment flows and subscription lifecycle events
+servers:
+  - url: http://localhost:8002
+    description: Development server
+paths:
+  /payments/process:
+    post:
+      summary: Process a payment
+      operationId: processPayment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user_id
+                - plan_id
+                - payment_method_id
+              properties:
+                user_id:
+                  type: string
+                plan_id:
+                  type: string
+                  enum: [basic, pro, enterprise]
+                payment_method_id:
+                  type: string
+      responses:
+        '200':
+          description: Payment processed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  transaction_id:
+                    type: string
+                  status:
+                    type: string
+                    enum: [success, failed, pending]
+                  amount:
+                    type: number
+                  currency:
+                    type: string
+                    enum: [USD]
+                  processed_at:
+                    type: string
+                    format: date-time
+        '400':
+          description: Bad request
+        '402':
+          description: Payment failed
+  /payments/webhook:
+    post:
+      summary: Handle payment provider webhook
+      operationId: handleWebhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Webhook processed
+        '400':
+          description: Invalid webhook
+  /subscriptions/{user_id}:
+    get:
+      summary: Get user subscription details
+      operationId: getUserSubscription
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Subscription details retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                  plan_id:
+                    type: string
+                  status:
+                    type: string
+                    enum: [active, canceled, past_due, trial]
+                  current_period_start:
+                    type: string
+                    format: date-time
+                  current_period_end:
+                    type: string
+                    format: date-time
+                  cancel_at_period_end:
+                    type: boolean
+        '404':
+          description: Subscription not found
+  /subscriptions/{user_id}/cancel:
+    post:
+      summary: Cancel user subscription
+      operationId: cancelSubscription
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Subscription cancelled
+        '404':
+          description: Subscription not found
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

@@ -1,0 +1,168 @@
+openapi: 3.0.3
+info:
+  title: Auditor Service
+  version: 1.0.0
+  description: Records all critical actions for auditing, compliance, and investigation
+servers:
+  - url: http://localhost:8004
+    description: Development server
+paths:
+  /audit/events:
+    post:
+      summary: Record an audit event
+      operationId: recordAuditEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - event_type
+                - actor_id
+                - action
+              properties:
+                event_type:
+                  type: string
+                  enum: [user_action, system_event, security_event, financial_transaction]
+                actor_id:
+                  type: string
+                action:
+                  type: string
+                metadata:
+                  type: object
+                  description: Additional context for the audit event
+                timestamp:
+                  type: string
+                  format: date-time
+      responses:
+        '201':
+          description: Audit event recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  event_type:
+                    type: string
+                  actor_id:
+                    type: string
+                  action:
+                    type: string
+                  metadata:
+                    type: object
+                  timestamp:
+                    type: string
+                    format: date-time
+        '400':
+          description: Bad request
+  /audit/events:
+    get:
+      summary: Query audit events
+      operationId: queryAuditEvents
+      parameters:
+        - in: query
+          name: event_type
+          schema:
+            type: string
+            enum: [user_action, system_event, security_event, financial_transaction]
+        - in: query
+          name: actor_id
+          schema:
+            type: string
+        - in: query
+          name: start_date
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: end_date
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: Audit events retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        event_type:
+                          type: string
+                        actor_id:
+                          type: string
+                        action:
+                          type: string
+                        metadata:
+                          type: object
+                        timestamp:
+                          type: string
+                          format: date-time
+                  total:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+        '400':
+          description: Bad request
+  /audit/events/{event_id}:
+    get:
+      summary: Get specific audit event
+      operationId: getAuditEvent
+      parameters:
+        - in: path
+          name: event_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Audit event retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  event_type:
+                    type: string
+                  actor_id:
+                    type: string
+                  action:
+                    type: string
+                  metadata:
+                    type: object
+                  timestamp:
+                    type: string
+                    format: date-time
+        '404':
+          description: Audit event not found
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

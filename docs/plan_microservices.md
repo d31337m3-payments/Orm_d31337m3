@@ -33,6 +33,8 @@ Responsibilities:
 - Run scraping workflows and data enrichment.
 - Build/refresh indexes for search and retrieval.
 - Provide a service-level API for data queries and persistence.
+_ ** Ensuring that all data writes are logged to the `auditor` service for compliance and traceability. Security of this data is also paramount. 
+It must ensure that sensitive data is encrypted at rest and in transit, and that access controls are strictly enforced. Employee access to this service should be limited and monitored, with audit trails for all administrative actions. And client data should not accessable to other services, or if it is, it should be done through secure APIs with proper authentication and authorization checks.
 
 ### 3. `client_index`
 - The user database service with secure storage and credential handling.
