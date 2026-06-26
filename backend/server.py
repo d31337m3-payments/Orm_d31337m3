@@ -66,7 +66,7 @@ BROKER_CONTACTS = {
     "MyLife": {"email": "privacy@mylife.com", "form": "https://www.mylife.com/ccpa"},
     "Radaris": {"email": "support@radaris.com", "form": "https://radaris.com/control/privacy"},
     "PeopleFinder": {"email": "privacy@peoplefinder.com", "form": "https://www.peoplefinder.com/optout"},
-    "TruthFinder": {"email": "privacy@truthfinder.com", "form": "https://www.truthfinder.com/opt-out/"},
+    "TruthFinder": {"email": "privacy@truthfinder.com/opt-out/"},
     "FastPeopleSearch": {"email": "support@fastpeoplesearch.com", "form": "https://www.fastpeoplesearch.com/removal"},
     "PublicRecords": {"email": "privacy@publicrecords.com", "form": "https://www.publicrecords.com/optout"},
     "Acxiom": {"email": "privacyofficer@acxiom.com", "form": "https://isapps.acxiom.com/optout/optout.aspx"},
@@ -77,6 +77,69 @@ BROKER_CONTACTS = {
     "Google Search": {"email": "support-deindex@google.com", "form": "https://reportcontent.google.com/forms/rtbf"},
     "Bing Search": {"email": "privacy@microsoft.com", "form": "https://www.bing.com/webmasters/tools/eu-privacy-request"},
 }
+
+
+def parse_promo_expires(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        expires_at = datetime.fromisoformat(value)
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return expires_at
+    except ValueError:
+        pass
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def normalize_promo_code(value: str) -> str:
+    return value.strip().upper()
+
+
+def build_promo_code(code: str, percent: int, expires: str) -> Optional[dict]:
+    if not code or not code.strip():
+        return None
+    expires_at = parse_promo_expires(expires)
+    return {
+        "code": normalize_promo_code(code),
+        "percent_off": int(percent),
+        "expires_at": expires_at,
+        "expires_raw": expires.strip(),
+    }
+
+PRIMARY_PROMO_CODE = os.environ.get("PROMO_CODE_PRIMARY", "OCanada75").strip()
+PRIMARY_PROMO_PERCENT = int(os.environ.get("PROMO_PERCENT_PRIMARY", "75"))
+PRIMARY_PROMO_EXPIRES = os.environ.get("PROMO_EXPIRES_PRIMARY", "2026-12-31")
+SECONDARY_PROMO_CODE = os.environ.get("PROMO_CODE_SECONDARY", "").strip()
+SECONDARY_PROMO_PERCENT = int(os.environ.get("PROMO_PERCENT_SECONDARY", "0"))
+SECONDARY_PROMO_EXPIRES = os.environ.get("PROMO_EXPIRES_SECONDARY", "")
+
+PROMO_CODES = [
+    promo for promo in [
+        build_promo_code(PRIMARY_PROMO_CODE, PRIMARY_PROMO_PERCENT, PRIMARY_PROMO_EXPIRES),
+        build_promo_code(SECONDARY_PROMO_CODE, SECONDARY_PROMO_PERCENT, SECONDARY_PROMO_EXPIRES),
+    ] if promo is not None
+]
+
+
+def find_promo_for_code(code: str) -> Optional[dict]:
+    normalized = normalize_promo_code(code)
+    for promo in PROMO_CODES:
+        if promo["code"] == normalized:
+            return promo
+    return None
+
+
+def promo_is_expired(promo: dict) -> bool:
+    if not promo.get("expires_at"):
+        return False
+    return promo["expires_at"].date() < datetime.now(timezone.utc).date()
 
 
 # Cached broker contacts read from DB; falls back to BROKER_CONTACTS on miss.
@@ -355,6 +418,7 @@ class RegisterIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
     name: Optional[str] = None
+    promo_code: Optional[str] = None
 
 
 class LoginIn(BaseModel):
@@ -721,6 +785,15 @@ async def register(payload: RegisterIn, background: BackgroundTasks, request: Re
     email = payload.email.lower()
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Email already registered")
+
+    promo = None
+    if payload.promo_code and payload.promo_code.strip():
+        promo = find_promo_for_code(payload.promo_code)
+        if not promo:
+            raise HTTPException(status_code=400, detail="Invalid promo code")
+        if promo_is_expired(promo):
+            raise HTTPException(status_code=400, detail="Promo code expired")
+
     user = {
         "id": str(uuid.uuid4()),
         "email": email,
@@ -734,6 +807,11 @@ async def register(payload: RegisterIn, background: BackgroundTasks, request: Re
         "subscription_started_at": None,
         "created_at": now_iso(),
     }
+    if promo:
+        user["promo_code"] = promo["code"]
+        user["promo_discount_percent"] = promo["percent_off"]
+        user["promo_expires_at"] = promo["expires_raw"]
+
     await db.users.insert_one(user)
     # Auto-seed Canadian profile for new users
     await db.profiles.insert_one({
@@ -753,7 +831,12 @@ async def register(payload: RegisterIn, background: BackgroundTasks, request: Re
     background.add_task(send_email, email, "Welcome to d31337m3 — Made in Canada",
                         f"Hi {user['name']},\n\nYour account is ready. We're already running your first scan across Google, Bing, and 15+ data brokers — check your dashboard in a couple of minutes.\n\nMade with pride in Canada.\n\n— d31337m3")
     token = create_token(user["id"], False)
-    return {"token": token, "user": {"id": user["id"], "email": email, "name": user["name"], "is_admin": False, "plan_id": None, "subscription_status": "trial"}}
+    response_user = {"id": user["id"], "email": email, "name": user["name"], "is_admin": False, "plan_id": None, "subscription_status": "trial"}
+    if promo:
+        response_user["promo_code"] = promo["code"]
+        response_user["promo_discount_percent"] = promo["percent_off"]
+        response_user["promo_expires_at"] = promo["expires_raw"]
+    return {"token": token, "user": response_user}
 
 
 @api.post("/auth/login")

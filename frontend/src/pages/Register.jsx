@@ -6,7 +6,7 @@ import { Terminal } from "lucide-react";
 export default function Register() {
   const { register } = useAuth();
   const nav = useNavigate();
-  const [form, setForm] = useState({ name: "", email: "", password: "" });
+  const [form, setForm] = useState({ name: "", email: "", password: "", promo_code: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -14,7 +14,7 @@ export default function Register() {
     e.preventDefault();
     setError(""); setLoading(true);
     try {
-      await register(form.email, form.password, form.name);
+      await register(form.email, form.password, form.name, form.promo_code);
       nav("/billing");
     } catch (e) {
       setError(e.response?.data?.detail || "Registration failed");
@@ -37,6 +37,8 @@ export default function Register() {
             <input data-testid="register-email" type="email" required value={form.email} onChange={(e)=>setForm({...form,email:e.target.value})} className="brutal-input" /></div>
           <div><div className="overline mb-1">password (6+ chars)</div>
             <input data-testid="register-password" type="password" required minLength={6} value={form.password} onChange={(e)=>setForm({...form,password:e.target.value})} className="brutal-input" /></div>
+          <div><div className="overline mb-1">promo code (optional)</div>
+            <input data-testid="register-promo-code" type="text" value={form.promo_code} onChange={(e)=>setForm({...form,promo_code:e.target.value})} className="brutal-input" placeholder="OCanada75" /></div>
           {error && <div data-testid="register-error" className="font-mono text-xs text-[#FF3333] py-2">› {error}</div>}
           <button data-testid="register-submit" type="submit" disabled={loading} className="brutal-btn brutal-btn-primary w-full">
             {loading ? "Creating..." : "Create Account"}

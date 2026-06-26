@@ -185,7 +185,7 @@ collect_config() {
   echo "  ${BOLD}— SMTP (for outbound email) —${NC}"
   prompt_default "SMTP host" "mail.d31337m3.com"                                          SMTP_HOST
   prompt_default "SMTP port (465 SSL · 587 STARTTLS)" "465"                               SMTP_PORT
-  prompt_default "SMTP username" "admin@d31337m3.com"                                     SMTP_USERNAME
+  prompt_default "SMTP username" "support@d31337m3.com"                                     SMTP_USERNAME
   prompt_secret  "SMTP password (will not echo)"                                          SMTP_PASSWORD
   SMTP_PASSWORD="${SMTP_PASSWORD:-Admin2026!!}"
   prompt_default "Enable SMTP delivery now? (true/false)" "true"                          SMTP_ENABLED
@@ -216,6 +216,12 @@ CORS_ORIGINS="$PUBLIC_URL,http://localhost:3000"
 JWT_SECRET="$JWT_SECRET"
 JWT_ALGORITHM="HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES=1440
+PROMO_CODE_PRIMARY="OCanada75"
+PROMO_PERCENT_PRIMARY=75
+PROMO_EXPIRES_PRIMARY="2026-12-31"
+PROMO_CODE_SECONDARY=""
+PROMO_PERCENT_SECONDARY=0
+PROMO_EXPIRES_SECONDARY=""
 SMTP_HOST="$SMTP_HOST"
 SMTP_PORT=$SMTP_PORT
 SMTP_USERNAME="$SMTP_USERNAME"

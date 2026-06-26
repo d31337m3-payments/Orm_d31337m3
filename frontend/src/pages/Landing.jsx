@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import Marquee from "react-fast-marquee";
 import { motion, useScroll, useTransform } from "framer-motion";
@@ -149,11 +149,77 @@ const Plan = ({ id, name, price, features, highlight }) => (
   </motion.div>
 );
 
+const LEET_VARIANTS = [
+  "D31337 Y0U753LF",
+  "D3L373 Y0UR53LF",
+  "D31337 Y0U7531F",
+  "D3L37E Y0U5R3LF",
+  "D31337 Y0U753LF FR0M 7H3 1N73RN37",
+  "D3L373 Y0U753LF FR0M 7H3 N37",
+];
+
+function sampleLeet() {
+  return LEET_VARIANTS[Math.floor(Math.random() * LEET_VARIANTS.length)];
+}
+
 export default function Landing() {
   const [dialog, setDialog] = useState(null);
+  const [heroText, setHeroText] = useState("D31337 YOURSELF");
+  const [displayText, setDisplayText] = useState(heroText);
   const { scrollY } = useScroll();
   const heroY = useTransform(scrollY, [0, 500], [0, 150]);
   const heroOpacity = useTransform(scrollY, [0, 400], [1, 0.2]);
+
+  useEffect(() => {
+    let mounted = true;
+    let glitchTimer = null;
+    let intervalId = null;
+
+    const getRandomChar = () => {
+      const pool = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+      return pool[Math.floor(Math.random() * pool.length)];
+    };
+
+    const glitchTo = (target) => {
+      let frame = 0;
+      const maxFrames = 10 + Math.floor(Math.random() * 10);
+      intervalId = setInterval(() => {
+        if (!mounted) return;
+        const mix = [...target].map((ch, idx) => {
+          if (idx < frame && Math.random() > 0.2) {
+            return target[idx];
+          }
+          return Math.random() > 0.4 ? getRandomChar() : " ";
+        });
+        setDisplayText(mix.join(""));
+        frame += 1;
+        if (frame >= maxFrames) {
+          if (intervalId) clearInterval(intervalId);
+          setDisplayText(target);
+          intervalId = null;
+        }
+      }, 80 + Math.floor(Math.random() * 40));
+    };
+
+    const scheduleSwap = () => {
+      if (!mounted) return;
+      const nextDelay = 3000 + Math.floor(Math.random() * 5000);
+      glitchTimer = setTimeout(() => {
+        if (!mounted) return;
+        const nextText = sampleLeet();
+        setHeroText(nextText);
+        glitchTo(nextText);
+        scheduleSwap();
+      }, nextDelay);
+    };
+
+    scheduleSwap();
+    return () => {
+      mounted = false;
+      if (glitchTimer) clearTimeout(glitchTimer);
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [displayText]);
 
   return (
     <div className="min-h-screen bg-[#050505] text-white relative overflow-hidden">
@@ -197,14 +263,11 @@ export default function Landing() {
               <CanadaFlag size={10} />
               <span>built in canada</span>
             </motion.div>
-            {["DELETE", "YOURSELF"].map((word, i) => (
-              <motion.h1
-                key={word}
-                initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, delay: i * 0.1 }}
-                className="font-display font-black text-6xl md:text-8xl leading-[0.95] tracking-tighter uppercase"
-              >{word}</motion.h1>
-            ))}
+            <motion.h1
+              initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.1 }}
+              className="font-display font-black text-6xl md:text-8xl leading-[0.95] tracking-tighter uppercase"
+            >{heroText}</motion.h1>
             <motion.h1
               initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.2 }}
@@ -223,6 +286,14 @@ export default function Landing() {
               className="flex flex-wrap gap-4">
               <Link to="/register" data-testid="hero-cta-primary" className="brutal-btn brutal-btn-primary">Start Free Trial →</Link>
               <a href="#features" data-testid="hero-cta-secondary" className="brutal-btn">View Capabilities</a>
+            </motion.div>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.7 }}
+              className="mt-8 brutal-card border border-[#FF3333] bg-[#140505] p-5 max-w-xl">
+              <div className="font-display text-2xl mb-2 text-[#FF3333]">Canada Day Launch Special</div>
+              <div className="font-mono text-sm text-zinc-300">
+                Use promo code <span className="text-white font-bold">OCanada75</span> for 75% off for the entire year. Available for a limited time on new signups.
+              </div>
             </motion.div>
           </div>
 

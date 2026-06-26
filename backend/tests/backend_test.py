@@ -87,6 +87,31 @@ class TestAuth:
         r = session.post(f"{API}/auth/register", json=user_creds)
         assert r.status_code == 400
 
+    def test_register_with_valid_promo_code(self, session):
+        creds = {
+            "email": f"promo+{uuid.uuid4().hex[:8]}@example.com",
+            "password": "password123",
+            "name": "Promo User",
+            "promo_code": "OCanada75",
+        }
+        r = session.post(f"{API}/auth/register", json=creds)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["user"]["promo_code"] == "OCANADA75"
+        assert data["user"]["promo_discount_percent"] == 75
+        assert data["user"]["promo_expires_at"]
+
+    def test_register_with_invalid_promo_code(self, session):
+        creds = {
+            "email": f"promo-invalid+{uuid.uuid4().hex[:8]}@example.com",
+            "password": "password123",
+            "name": "Promo Invalid",
+            "promo_code": "BADCODE",
+        }
+        r = session.post(f"{API}/auth/register", json=creds)
+        assert r.status_code == 400
+        assert "Invalid promo code" in r.text
+
     def test_login_admin(self, session):
         r = session.post(f"{API}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
         assert r.status_code == 200

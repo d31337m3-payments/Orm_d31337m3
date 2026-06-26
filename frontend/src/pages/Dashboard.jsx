@@ -108,7 +108,7 @@ export default function Dashboard() {
       {!subActive && (
         <motion.div
           initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
-          className="brutal-card border-[#FFD700] p-6 mb-6 flex items-center justify-between" data-testid="trial-banner">
+          className="brutal-card border-[#FFD700] p-6 mb-6 flex flex-col gap-4" data-testid="trial-banner">
           <div className="flex items-center gap-4">
             <AlertTriangle className="text-[#FFD700]" />
             <div>
@@ -119,7 +119,10 @@ export default function Dashboard() {
               <div className="font-mono text-xs text-zinc-500 mt-1">Subscribe to unlock unlimited scans, alerts, removal requests, and legal document generation.</div>
             </div>
           </div>
-          <Link to="/billing" data-testid="upgrade-cta" className="brutal-btn brutal-btn-primary">Upgrade →</Link>
+          <div className="rounded border border-[#FF3333] bg-[#1a0808] p-4 font-mono text-sm text-zinc-200">
+            Canada Day Launch Special: Use <span className="text-white font-bold">OCanada75</span> for <span className="text-[#FF3333]">75% off for the entire year</span> on new signups when activated in the registration form.
+          </div>
+          <Link to="/billing" data-testid="upgrade-cta" className="brutal-btn brutal-btn-primary self-start">Upgrade →</Link>
         </motion.div>
       )}
 
