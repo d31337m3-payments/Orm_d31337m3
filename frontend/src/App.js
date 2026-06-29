@@ -11,6 +11,7 @@ import Findings from "@/pages/Findings";
 import Billing from "@/pages/Billing";
 import Admin from "@/pages/Admin";
 import Documents from "@/pages/Documents";
+import Security from "@/pages/Security";
 
 const Protected = ({ children, admin = false }) => {
   const { user, loading } = useAuth();
@@ -34,6 +35,7 @@ function App() {
             <Route path="/findings" element={<Protected><Findings /></Protected>} />
             <Route path="/billing" element={<Protected><Billing /></Protected>} />
             <Route path="/documents" element={<Protected><Documents /></Protected>} />
+            <Route path="/security" element={<Protected><Security /></Protected>} />
             <Route path="/admin" element={<Protected admin><Admin /></Protected>} />
           </Routes>
         </BrowserRouter>

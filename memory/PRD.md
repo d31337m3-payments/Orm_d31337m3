@@ -42,8 +42,8 @@ Build "d31337m3.com" (pronounced "delete me dot com") — a complete Online Repu
 - **Findings → Documents flow**: "LEGAL" button on any active finding pre-fills the document generator
 
 ## Architecture / Tasks Done
-- `/app/backend/server.py` (single-file FastAPI app, ~850 lines)
-- `/app/backend/.env` — SMTP, JWT, crypto wallet, RPC URLs, admin seed
+- `/app/microservices/` — service-oriented API stack (client_index, payments, data_handling, auditor, watchdog, orchestrator)
+- `/app/microservices/shared/` — shared models, auth, database, and secrets utilities
 - `/app/frontend/src/pages/` — Landing, Login, Register, Dashboard, Keywords, Findings, Billing, Admin, **Documents**
 - `/app/frontend/src/components/` — DashboardLayout, **SignaturePad**, **FeatureDialog**, **CanadaFlag**
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import AdminTable from "@/components/AdminTable";
 import Drawer, { Field } from "@/components/Drawer";
@@ -25,6 +25,16 @@ const STATUS_PILL = (status, color) => (
   <span className="font-mono text-[10px] px-2 py-0.5 border" style={{ color, borderColor: color }}>{status}</span>
 );
 
+const EMPTY_STATS = {
+  users: 0,
+  active_subs: 0,
+  keywords: 0,
+  findings_total: 0,
+  findings_active: 0,
+  pending_payments: 0,
+  removal_requests: 0,
+};
+
 export default function Admin() {
   const { user: me, logout } = useAuth();
   const navigate = useNavigate();
@@ -36,34 +46,41 @@ export default function Admin() {
   const [emails, setEmails] = useState([]);
   const [removals, setRemovals] = useState([]);
   const [audit, setAudit] = useState([]);
+  const [authEvents, setAuthEvents] = useState([]);
   const [documents, setDocuments] = useState([]);
+  const [authEventsLoading, setAuthEventsLoading] = useState(false);
+  const [authEventsError, setAuthEventsError] = useState("");
 
   // Detail drawer state
   const [userDetail, setUserDetail] = useState(null);
   const [paymentDetail, setPaymentDetail] = useState(null);
   const [removalDetail, setRemovalDetail] = useState(null);
   const [documentDetail, setDocumentDetail] = useState(null);
+  const [authEventDetail, setAuthEventDetail] = useState(null);
 
-  const EMPTY_STATS = {
-    users: 0,
-    active_subs: 0,
-    keywords: 0,
-    findings_total: 0,
-    findings_active: 0,
-    pending_payments: 0,
-    removal_requests: 0,
-  };
-
-  const normalizeDetail = (detail) => {
+  const normalizeDetail = useCallback((detail) => {
     const raw = String(detail || "");
     const lower = raw.toLowerCase();
     if (lower.includes("no matching row found") || lower.includes("no row was found")) {
       return "No records available yet.";
     }
     return raw || "Request failed.";
-  };
+  }, []);
 
-  const load = async () => {
+  const loadAuthEvents = useCallback(async () => {
+    setAuthEventsLoading(true);
+    setAuthEventsError("");
+    try {
+      const r = await api.get("/auth/audit/events?limit=500");
+      setAuthEvents(r.data?.events || []);
+    } catch (e) {
+      setAuthEventsError(normalizeDetail(e?.response?.data?.detail || e?.message || "Failed to load auth audit events"));
+    } finally {
+      setAuthEventsLoading(false);
+    }
+  }, [normalizeDetail]);
+
+  const load = useCallback(async () => {
     const keys = ["stats", "users", "payments", "email-log", "removals", "audit-log", "documents"];
     const results = await Promise.allSettled(keys.map((k) => api.get(`/admin/${k}`)));
 
@@ -98,8 +115,10 @@ export default function Admin() {
     setAudit(a.audit || []);
     setDocuments(d.documents || []);
     setLoadError(failed.length ? failed[0] : "");
-  };
-  useEffect(() => { load(); }, []);
+
+    loadAuthEvents();
+  }, [loadAuthEvents, normalizeDetail]);
+  useEffect(() => { load(); }, [load]);
 
   const userById = (id) => users.find(u => u.id === id);
 
@@ -235,6 +254,30 @@ export default function Admin() {
     { key: "changes", label: "Changes", render: r => <span className="text-zinc-400">{r.changes ? JSON.stringify(r.changes).slice(0,80) : "—"}</span>, csv: r => JSON.stringify(r.changes || {}) },
   ];
 
+  const authEventColumns = [
+    { key: "created_at", label: "When", render: r => <span className="text-zinc-500">{r.created_at?.slice(0,19)}</span>, csv: r => r.created_at || "" },
+    { key: "event", label: "Event", render: r => <span className="text-[#FF3333]">{r.event}</span> },
+    { key: "email", label: "Email", render: r => r.email || "—" },
+    { key: "user_id", label: "User", render: r => r.user_id ? <span className="text-zinc-300">{r.user_id.slice(0,8)}</span> : "—", csv: r => r.user_id || "" },
+    { key: "ip_address", label: "IP", render: r => r.ip_address || "—" },
+    { key: "detail", label: "Detail", render: r => <span className="text-zinc-400">{r.detail ? JSON.stringify(r.detail).slice(0,120) : "—"}</span>, csv: r => JSON.stringify(r.detail || {}) },
+  ];
+
+  const eventOptions = Array.from(new Set(authEvents.map((r) => r.event).filter(Boolean)))
+    .sort()
+    .map((v) => ({ value: v, label: v }));
+  const userOptions = Array.from(new Set(authEvents.map((r) => r.user_id).filter(Boolean)))
+    .sort()
+    .map((v) => ({ value: v, label: `${v.slice(0,8)}...` }));
+  const emailOptions = Array.from(new Set(authEvents.map((r) => r.email).filter(Boolean)))
+    .sort()
+    .map((v) => ({ value: v, label: v }));
+  const authEventFilters = [
+    { key: "event", label: "event", options: eventOptions },
+    { key: "user_id", label: "user", options: userOptions },
+    { key: "email", label: "email", options: emailOptions },
+  ];
+
   const documentColumns = [
     { key: "created_at", label: "Created", render: r => <span className="text-zinc-500">{r.created_at?.slice(0,16)}</span> },
     { key: "user_email", label: "User" },
@@ -293,6 +336,7 @@ export default function Admin() {
           ["workforce","Workforce Ops"],
           ["emails","Email Log"],
           ["audit","Audit Log"],
+          ["auth-security","Auth Security"],
           ["settings","Settings"],
         ].map(([k,l]) => (
           <button key={k} onClick={()=>setTab(k)} data-testid={`admin-tab-${k}`}
@@ -347,6 +391,35 @@ export default function Admin() {
           data={audit} columns={auditColumns}
           searchKeys={["actor_email", "action", "target_email"]}
         />
+      )}
+      {tab === "auth-security" && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <div className="font-mono text-xs text-zinc-500">Auth login/register/2FA/device security trail</div>
+            <button
+              onClick={loadAuthEvents}
+              disabled={authEventsLoading}
+              data-testid="admin-auth-audit-refresh"
+              className="brutal-btn !py-2 !px-3"
+            >
+              {authEventsLoading ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
+          {authEventsError && (
+            <div className="mb-3 font-mono text-xs text-[#FF3333]" data-testid="admin-auth-audit-error">
+              {'> '} {authEventsError}
+            </div>
+          )}
+          <AdminTable
+            testid="admin-auth-audit"
+            exportName="auth-audit-events"
+            data={authEvents}
+            columns={authEventColumns}
+            filters={authEventFilters}
+            searchKeys={["event", "email", "user_id", "ip_address"]}
+            onRowClick={(r) => setAuthEventDetail(r)}
+          />
+        </div>
       )}
       {tab === "documents" && (
         <AdminTable
@@ -485,6 +558,31 @@ export default function Admin() {
                 <img src={documentDetail.signature_image} alt="sig" className="max-h-20 bg-white p-2 inline-block"/>
               </div>
             )}
+          </div>
+        )}
+      </Drawer>
+
+      {/* Auth event drawer */}
+      <Drawer
+        open={!!authEventDetail}
+        onClose={() => setAuthEventDetail(null)}
+        title={authEventDetail ? `Auth Event · ${authEventDetail.event}` : ""}
+        testid="auth-event-drawer"
+      >
+        {authEventDetail && (
+          <div className="space-y-1">
+            <Field label="Event ID" value={authEventDetail.id} />
+            <Field label="When" value={authEventDetail.created_at} />
+            <Field label="Event" value={authEventDetail.event} />
+            <Field label="Email" value={authEventDetail.email || "—"} />
+            <Field label="User ID" value={authEventDetail.user_id || "—"} />
+            <Field label="IP Address" value={authEventDetail.ip_address || "—"} />
+            <div className="mt-4 border border-[#222] p-4 bg-black">
+              <div className="overline mb-2">// detail payload</div>
+              <pre className="font-mono text-xs text-zinc-300 whitespace-pre-wrap max-h-96 overflow-y-auto">
+                {JSON.stringify(authEventDetail.detail || {}, null, 2)}
+              </pre>
+            </div>
           </div>
         )}
       </Drawer>

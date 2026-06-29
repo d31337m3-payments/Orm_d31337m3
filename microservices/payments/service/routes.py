@@ -10,6 +10,12 @@ from typing import Optional, List, Dict, Literal
 import os
 import logging
 import json
+import sqlite3
+import threading
+import re
+import hmac
+import hashlib
+import time
 from datetime import datetime, timedelta
 from pydantic import BaseModel
 
@@ -21,6 +27,7 @@ from shared.jwt_utils import create_service_token, verify_service_token, create_
 from shared.security_middleware import verify_service_request, verify_user_request, require_service_auth, require_user_auth
 from shared.database_models import *
 from shared.utils import now_iso, hash_password, verify_password, SUPPORTED_COUNTRIES, PLANS, CRYPTO_WALLET, PAYMENTS_EMAIL, verify_usdc_tx
+from shared.secrets_manager import get_secret
 
 # Import local models (would be defined in a models.py file)
 # For now, we'll define them inline or import from shared
@@ -29,7 +36,250 @@ from shared.utils import now_iso, hash_password, verify_password, SUPPORTED_COUN
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger("payments.routes")
 
-ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@example.com")
+TX_HASH_RE = re.compile(r"^0x[a-fA-F0-9]{64}$")
+
+_db_lock = threading.Lock()
+
+# Bounded in-memory stores for launch reliability.
+PAYMENT_STORE: Dict[str, dict] = {}
+USER_PAYMENTS: Dict[str, List[str]] = {}
+USER_SUBSCRIPTIONS: Dict[str, dict] = {}
+MAX_PAYMENTS_IN_MEMORY = int(os.environ.get("PAYMENTS_MAX_RECORDS", "100000"))
+
+
+def _payments_db_path() -> str:
+    return get_secret("PAYMENTS_DB_PATH", os.environ.get("PAYMENTS_DB_PATH", "/tmp/d31337m3_payments.db")) or "/tmp/d31337m3_payments.db"
+
+
+def _admin_email() -> str:
+    return get_secret("ADMIN_EMAIL", os.environ.get("ADMIN_EMAIL", "admin@example.com")) or "admin@example.com"
+
+
+def _allow_placeholder_crypto_verification() -> bool:
+    return (get_secret("ALLOW_PLACEHOLDER_CRYPTO_VERIFICATION", os.environ.get("ALLOW_PLACEHOLDER_CRYPTO_VERIFICATION", "false")) or "false").lower() == "true"
+
+
+def _stripe_webhook_secret() -> str:
+    return get_secret("STRIPE_WEBHOOK_SECRET", os.environ.get("STRIPE_WEBHOOK_SECRET", "")) or ""
+
+
+def _stripe_webhook_tolerance_seconds() -> int:
+    return int(get_secret("STRIPE_WEBHOOK_TOLERANCE_SECONDS", os.environ.get("STRIPE_WEBHOOK_TOLERANCE_SECONDS", "300")) or "300")
+
+
+def _stripe_secret_key() -> str:
+    return get_secret("STRIPE_SECRET_KEY", os.environ.get("STRIPE_SECRET_KEY", "")) or ""
+
+
+def _db_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(_payments_db_path())
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init_store_db() -> None:
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS payments (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    plan_id TEXT,
+                    amount_usd REAL,
+                    method TEXT,
+                    status TEXT,
+                    stripe_payment_intent_id TEXT,
+                    tx_hash TEXT,
+                    network TEXT,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    payload_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_payments_intent ON payments(stripe_payment_intent_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_payments_tx ON payments(tx_hash)")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS subscriptions (
+                    user_id TEXT PRIMARY KEY,
+                    plan_id TEXT,
+                    status TEXT,
+                    started_at TEXT,
+                    expires_at TEXT,
+                    updated_at TEXT
+                )
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _persist_payment(payment_data: dict) -> None:
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            now = now_iso()
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO payments
+                (id, user_id, plan_id, amount_usd, method, status, stripe_payment_intent_id, tx_hash, network, created_at, updated_at, payload_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    payment_data["id"],
+                    payment_data.get("user_id"),
+                    payment_data.get("plan_id"),
+                    float(payment_data.get("amount_usd", 0) or 0),
+                    payment_data.get("method"),
+                    payment_data.get("status"),
+                    payment_data.get("stripe_payment_intent_id"),
+                    payment_data.get("tx_hash"),
+                    payment_data.get("network"),
+                    payment_data.get("created_at") or now,
+                    now,
+                    json.dumps(payment_data),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _load_payment(payment_id: str) -> Optional[dict]:
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            row = conn.execute("SELECT payload_json FROM payments WHERE id = ?", (payment_id,)).fetchone()
+            if not row:
+                return None
+            return json.loads(row["payload_json"])
+        finally:
+            conn.close()
+
+
+def _load_user_payments(user_id: str) -> List[dict]:
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            rows = conn.execute(
+                "SELECT payload_json FROM payments WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+                (user_id, MAX_PAYMENTS_IN_MEMORY),
+            ).fetchall()
+            return [json.loads(r["payload_json"]) for r in rows]
+        finally:
+            conn.close()
+
+
+def _find_payment_by_intent(intent_id: str) -> Optional[dict]:
+    if not intent_id:
+        return None
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            row = conn.execute(
+                "SELECT payload_json FROM payments WHERE stripe_payment_intent_id = ? ORDER BY created_at DESC LIMIT 1",
+                (intent_id,),
+            ).fetchone()
+            return json.loads(row["payload_json"]) if row else None
+        finally:
+            conn.close()
+
+
+def _find_payment_by_tx_hash(tx_hash: str) -> Optional[dict]:
+    if not tx_hash:
+        return None
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            row = conn.execute(
+                "SELECT payload_json FROM payments WHERE tx_hash = ? ORDER BY created_at DESC LIMIT 1",
+                (tx_hash,),
+            ).fetchone()
+            return json.loads(row["payload_json"]) if row else None
+        finally:
+            conn.close()
+
+
+def _persist_subscription(user_id: str, plan_id: str, status_value: str) -> None:
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            prev = conn.execute("SELECT started_at FROM subscriptions WHERE user_id = ?", (user_id,)).fetchone()
+            started_at = prev["started_at"] if prev and prev["started_at"] else now_iso()
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO subscriptions
+                (user_id, plan_id, status, started_at, expires_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, plan_id, status_value, started_at, None, now_iso()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _load_subscription(user_id: str) -> Optional[dict]:
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            row = conn.execute("SELECT * FROM subscriptions WHERE user_id = ?", (user_id,)).fetchone()
+            if not row:
+                return None
+            return {
+                "user_id": row["user_id"],
+                "plan_id": row["plan_id"],
+                "status": row["status"],
+                "started_at": row["started_at"],
+                "expires_at": row["expires_at"],
+                "updated_at": row["updated_at"],
+            }
+        finally:
+            conn.close()
+
+
+def _verify_stripe_signature(raw_body: bytes, stripe_signature: str) -> bool:
+    webhook_secret = _stripe_webhook_secret()
+    if not webhook_secret:
+        return False
+    if not stripe_signature:
+        return False
+
+    parts = {}
+    for p in stripe_signature.split(","):
+        if "=" in p:
+            k, v = p.split("=", 1)
+            parts.setdefault(k, []).append(v)
+
+    ts_values = parts.get("t") or []
+    sig_values = parts.get("v1") or []
+    if not ts_values or not sig_values:
+        return False
+
+    ts = ts_values[0]
+    try:
+        ts_int = int(ts)
+    except ValueError:
+        return False
+
+    now_ts = int(time.time())
+    if abs(now_ts - ts_int) > _stripe_webhook_tolerance_seconds():
+        return False
+
+    signed_payload = f"{ts}.{raw_body.decode('utf-8')}".encode("utf-8")
+    expected = hmac.new(webhook_secret.encode("utf-8"), signed_payload, hashlib.sha256).hexdigest()
+    for incoming in sig_values:
+        if hmac.compare_digest(expected, incoming):
+            return True
+    return False
+
+
+_init_store_db()
 
 # Create routers
 payment_router = APIRouter()
@@ -46,50 +296,67 @@ class SubscribeIn(BaseModel):
     stripe_client_secret: Optional[str] = None
     note: Optional[str] = None
 
-# Mock database functions (in a real implementation, these would connect to actual databases)
+# In-memory persistence helpers (replace no-op mocks).
 async def get_user_by_email(email: str):
-    """Mock function to get user by email"""
-    # This would be replaced with actual database query
     return None
 
 async def get_user_by_id(user_id: str):
-    """Mock function to get user by ID"""
-    # This would be replaced with actual database query
     return None
 
 async def create_user(user_data: dict):
-    """Mock function to create a user"""
-    # This would be replaced with actual database insert
     return user_data
 
 async def get_payment_by_id(payment_id: str):
-    """Mock function to get payment by ID"""
-    # This would be replaced with actual database query
-    return None
+    payment = _load_payment(payment_id)
+    if payment:
+        return payment
+    return PAYMENT_STORE.get(payment_id)
 
 async def get_payments_by_user_id(user_id: str):
-    """Mock function to get payments by user ID"""
-    # This would be replaced with actual database query
-    return []
+    rows = _load_user_payments(user_id)
+    if rows:
+        return rows
+    ids = USER_PAYMENTS.get(user_id, [])
+    return [PAYMENT_STORE[p] for p in ids if p in PAYMENT_STORE]
 
 async def create_payment(payment_data: dict):
-    """Mock function to create a payment"""
-    # This would be replaced with actual database insert
+    _persist_payment(payment_data)
+    PAYMENT_STORE[payment_data["id"]] = payment_data
+    USER_PAYMENTS.setdefault(payment_data["user_id"], []).append(payment_data["id"])
+    if len(PAYMENT_STORE) > MAX_PAYMENTS_IN_MEMORY:
+        ordered = sorted(PAYMENT_STORE.items(), key=lambda kv: kv[1].get("created_at", ""))
+        for old_id, old_payment in ordered[: len(PAYMENT_STORE) - MAX_PAYMENTS_IN_MEMORY]:
+            PAYMENT_STORE.pop(old_id, None)
+            uid = old_payment.get("user_id")
+            if uid in USER_PAYMENTS:
+                USER_PAYMENTS[uid] = [x for x in USER_PAYMENTS[uid] if x != old_id]
     return payment_data
 
 async def update_payment(payment_id: str, update_data: dict):
-    """Mock function to update a payment"""
-    # This would be replaced with actual database update
-    return {**update_data, "id": payment_id}
+    payment = await get_payment_by_id(payment_id)
+    if not payment:
+        return None
+    payment.update(update_data)
+    payment["updated_at"] = now_iso()
+    _persist_payment(payment)
+    PAYMENT_STORE[payment_id] = payment
+    return payment
 
 async def get_user_plan(user_id: str):
-    """Mock function to get user's current plan"""
-    # This would be replaced with actual database query
-    return None
+    sub = _load_subscription(user_id)
+    if sub:
+        return sub
+    return USER_SUBSCRIPTIONS.get(user_id)
 
 async def update_user_subscription(user_id: str, plan_id: str, status: str):
-    """Mock function to update user's subscription"""
-    # This would be replaced with actual database update
+    _persist_subscription(user_id, plan_id, status)
+    USER_SUBSCRIPTIONS[user_id] = {
+        "plan_id": plan_id,
+        "status": status,
+        "started_at": USER_SUBSCRIPTIONS.get(user_id, {}).get("started_at") or now_iso(),
+        "expires_at": None,
+        "updated_at": now_iso(),
+    }
     return True
 
 # Payment endpoints
@@ -170,11 +437,21 @@ async def process_payment(payload: SubscribeIn, background: BackgroundTasks, req
             }
 
         # Step 2: verify tx hash
+        if not TX_HASH_RE.match(payload.tx_hash):
+            raise HTTPException(status_code=400, detail="Invalid transaction hash format")
+
+        existing_tx = _find_payment_by_tx_hash(payload.tx_hash)
+        if existing_tx and existing_tx.get("user_id") != user["id"]:
+            raise HTTPException(status_code=409, detail="Transaction hash already used")
+
         verification = await verify_usdc_tx(payload.network, payload.tx_hash, plan["price_usd"])
         payment_data["network"] = payload.network
         payment_data["tx_hash"] = payload.tx_hash
         
-        if verification:
+        if verification and (
+            verification.get("verification_mode") != "placeholder"
+            or _allow_placeholder_crypto_verification()
+        ):
             payment_data["status"] = "confirmed"
             payment_data["verification"] = verification
             
@@ -211,7 +488,7 @@ async def process_payment(payload: SubscribeIn, background: BackgroundTasks, req
             # Send notification for manual review
             background.add_task(
                 send_email_mock,
-                ADMIN_EMAIL,
+                _admin_email(),
                 f"[d31337m3] Crypto payment needs manual review — {user['email']}",
                 f"Tx hash {payload.tx_hash} on {payload.network} could not be auto-verified for ${plan['price_usd']}. "
                 f"Please review in admin panel.\n"
@@ -224,7 +501,7 @@ async def process_payment(payload: SubscribeIn, background: BackgroundTasks, req
             }
 
     elif payload.payment_method == "stripe":
-        if not os.environ.get("STRIPE_SECRET_KEY"):
+        if not _stripe_secret_key():
             payment_data["status"] = "stripe_unavailable"
             payment_data["instructions"] = {
                 "message": "Stripe credentials not yet configured. Please use Interac or Crypto, or contact support."
@@ -314,10 +591,13 @@ async def update_subscription(payload: SubscribeIn, background: BackgroundTasks,
 @webhook_router.post("/stripe")
 async def stripe_webhook(request: Request):
     """Handle Stripe webhooks"""
-    # In a real implementation, this would verify the webhook signature
-    # and process the payment event
+    raw = await request.body()
+    signature = request.headers.get("stripe-signature", "")
+    if not _verify_stripe_signature(raw, signature):
+        raise HTTPException(status_code=400, detail="Invalid Stripe signature")
+
     try:
-        payload = await request.json()
+        payload = json.loads(raw.decode("utf-8"))
         logger.info(f"Received Stripe webhook: {json.dumps(payload)}")
         
         # Process the webhook based on event type
@@ -325,22 +605,24 @@ async def stripe_webhook(request: Request):
         data = payload.get("data", {}).get("object", {})
         
         if event_type == "payment_intent.succeeded":
-            # Payment was completed successfully
-            # Update payment status and user subscription
             payment_intent_id = data.get("id")
-            # In a real implementation, we would:
-            # 1. Find the payment record by stripe_payment_intent_id
-            # 2. Update the payment status to "confirmed"
-            # 3. Update the user's subscription to "active"
-            pass
+            payment = _find_payment_by_intent(payment_intent_id)
+            if payment:
+                await update_payment(payment["id"], {
+                    "status": "confirmed",
+                    "stripe_webhook_confirmed_at": now_iso(),
+                    "stripe_event_id": payload.get("id"),
+                })
+                await update_user_subscription(payment["user_id"], payment["plan_id"], "active")
         elif event_type == "payment_intent.payment_failed":
-            # Payment failed
-            # Update payment status
             payment_intent_id = data.get("id")
-            # In a real implementation, we would:
-            # 1. Find the payment record by stripe_payment_intent_id
-            # 2. Update the payment status to "failed"
-            pass
+            payment = _find_payment_by_intent(payment_intent_id)
+            if payment:
+                await update_payment(payment["id"], {
+                    "status": "failed",
+                    "stripe_webhook_failed_at": now_iso(),
+                    "stripe_event_id": payload.get("id"),
+                })
             
         return {"status": "processed"}
     except Exception as e:
@@ -366,9 +648,8 @@ async def interac_webhook(request: Request):
 
 # Email service mock (can be replaced with real implementation)
 async def send_email_mock(to: str, subject: str, body: str, attachments: Optional[List[Dict]] = None) -> bool:
-    """Mock email service for development"""
-    # In production, this would be replaced with real email sending
-    print(f"[EMAIL-MOCK] to={to} subject={subject!r}")
+    """Development email sink; logs only when SMTP is not wired for this service."""
+    logger.info(f"[EMAIL-MOCK] to={to} subject={subject!r}")
     return True
 
 # Re-export shared models for convenience

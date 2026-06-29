@@ -3,11 +3,16 @@ API Routes for Auditor Service
 Contains audit trail recording and compliance reporting endpoints
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from typing import Optional, List
 import os
 import logging
-from datetime import datetime, timedelta
+import sqlite3
+import json
+import csv
+import io
+import threading
+from datetime import datetime, timedelta, timezone
 
 # Import shared components
 import sys
@@ -17,6 +22,7 @@ from shared.jwt_utils import create_service_token, verify_service_token, create_
 from shared.security_middleware import verify_service_request, verify_user_request, require_service_auth, require_user_auth
 from shared.database_models import *
 from shared.utils import now_iso, hash_password, verify_password, SUPPORTED_COUNTRIES
+from shared.secrets_manager import get_secret
 
 # Import local models (would be defined in a models.py file)
 # For now, we'll define them inline or import from shared
@@ -29,30 +35,132 @@ logger = logging.getLogger("auditor.routes")
 audit_router = APIRouter()
 compliance_router = APIRouter()
 
-# Mock database functions (in a real implementation, these would connect to actual databases)
+AUDIT_ENTRIES: List[dict] = []
+_db_lock = threading.Lock()
+
+
+def _max_audit_entries() -> int:
+    return int(get_secret("AUDITOR_MAX_ENTRIES", os.environ.get("AUDITOR_MAX_ENTRIES", "200000")) or "200000")
+
+
+def _db_path() -> str:
+    return get_secret("AUDITOR_DB_PATH", os.environ.get("AUDITOR_DB_PATH", "/tmp/d31337m3_auditor.db")) or "/tmp/d31337m3_auditor.db"
+
+
+def _db_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(_db_path())
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init_db() -> None:
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS audit_entries (
+                    id TEXT PRIMARY KEY,
+                    actor_id TEXT,
+                    actor_email TEXT,
+                    action TEXT,
+                    target_user_id TEXT,
+                    target_email TEXT,
+                    at TEXT,
+                    ip_address TEXT,
+                    user_agent TEXT,
+                    payload_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_entries(at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_entries(actor_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_entries(action)")
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _persist_audit_entry(audit_data: dict) -> None:
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO audit_entries
+                (id, actor_id, actor_email, action, target_user_id, target_email, at, ip_address, user_agent, payload_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    audit_data.get("id"),
+                    audit_data.get("actor_id"),
+                    audit_data.get("actor_email"),
+                    audit_data.get("action"),
+                    audit_data.get("target_user_id"),
+                    audit_data.get("target_email"),
+                    audit_data.get("at"),
+                    audit_data.get("ip_address"),
+                    audit_data.get("user_agent"),
+                    json.dumps(audit_data),
+                ),
+            )
+            conn.execute(
+                """
+                DELETE FROM audit_entries
+                WHERE id IN (
+                    SELECT id FROM audit_entries
+                    ORDER BY at DESC
+                    LIMIT -1 OFFSET ?
+                )
+                """,
+                (_max_audit_entries(),),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _load_audit_entries(limit: int = 5000) -> List[dict]:
+    bounded = max(1, min(limit, 50000))
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            rows = conn.execute(
+                "SELECT payload_json FROM audit_entries ORDER BY at DESC LIMIT ?",
+                (bounded,),
+            ).fetchall()
+            return [json.loads(r["payload_json"]) for r in rows]
+        finally:
+            conn.close()
+
+
+_init_db()
+
+
+def _require_admin(user: dict) -> None:
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin only")
+
 async def get_user_by_email(email: str):
-    """Mock function to get user by email"""
-    # This would be replaced with actual database query
     return None
 
 async def get_user_by_id(user_id: str):
-    """Mock function to get user by ID"""
-    # This would be replaced with actual database query
     return None
 
 async def create_user(user_data: dict):
-    """Mock function to create a user"""
-    # This would be replaced with actual database insert
     return user_data
 
 async def get_admin_audit_logs(limit: int = 500):
-    """Mock function to get audit logs"""
-    # This would be replaced with actual database query
-    return []
+    rows = _load_audit_entries(limit=max(1, min(limit, 5000)))
+    if rows:
+        return rows
+    return sorted(AUDIT_ENTRIES, key=lambda r: r.get("at", ""), reverse=True)[: max(1, min(limit, 5000))]
 
 async def create_audit_entry(audit_data: dict):
-    """Mock function to create an audit entry"""
-    # This would be replaced with actual database insert
+    _persist_audit_entry(audit_data)
+    AUDIT_ENTRIES.append(audit_data)
+    if len(AUDIT_ENTRIES) > _max_audit_entries():
+        del AUDIT_ENTRIES[: len(AUDIT_ENTRIES) - _max_audit_entries()]
     return audit_data
 
 # Pydantic models (imported from shared or defined locally)
@@ -111,8 +219,7 @@ async def get_audit_logs(
     user: dict = Depends(verify_user_request)
 ):
     """Get audit logs (admin only in real implementation)"""
-    # In a real implementation, this would check if user is admin
-    # For now, we'll allow authenticated users to see logs (would be restricted)
+    _require_admin(user)
     
     logs = await get_admin_audit_logs(limit=limit)
     # Apply offset and limit
@@ -133,8 +240,7 @@ async def get_compliance_report(
     user: dict = Depends(verify_user_request)
 ):
     """Generate compliance report"""
-    # In a real implementation, this would check if user is admin or authorized
-    # For now, we'll allow authenticated users to see reports (would be restricted)
+    _require_admin(user)
     
     # Parse period
     days = 30  # default
@@ -148,10 +254,28 @@ async def get_compliance_report(
     end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=days)
     
-    # In a real implementation, this would query the database for audit entries
-    # within the date range and generate statistics
-    
-    # Mock compliance report
+    logs = await get_admin_audit_logs(limit=50000)
+    in_range = []
+    for row in logs:
+        ts = row.get("at")
+        try:
+            dt = datetime.fromisoformat(ts)
+        except Exception:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        if start_date <= dt <= end_date:
+            in_range.append(row)
+
+    actions_breakdown = {}
+    daily_breakdown = {}
+    for row in in_range:
+        action = row.get("action") or "unknown"
+        actions_breakdown[action] = actions_breakdown.get(action, 0) + 1
+        day_key = (row.get("at") or "")[:10]
+        if day_key:
+            daily_breakdown[day_key] = daily_breakdown.get(day_key, 0) + 1
+
     report = {
         "report_type": report_type,
         "period": period,
@@ -160,12 +284,15 @@ async def get_compliance_report(
             "end": end_date.isoformat()
         },
         "summary": {
-            "total_events": 0,
-            "unique_actors": 0,
-            "actions_breakdown": {},
-            "daily_breakdown": []
+            "total_events": len(in_range),
+            "unique_actors": len(set([r.get("actor_id") for r in in_range if r.get("actor_id")])),
+            "actions_breakdown": actions_breakdown,
+            "daily_breakdown": [
+                {"date": day, "count": count}
+                for day, count in sorted(daily_breakdown.items())
+            ]
         },
-        "details": []
+        "details": in_range[:1000] if report_type == "detailed" else []
     }
     
     return report
@@ -176,15 +303,38 @@ async def export_compliance_data(
     user: dict = Depends(verify_user_request)
 ):
     """Export compliance data in various formats"""
-    # In a real implementation, this would check if user is admin or authorized
-    # For now, we'll allow authenticated users to export data (would be restricted)
+    _require_admin(user)
     
     # Get audit logs
-    logs = await get_admin_audit_logs(limit=1000)  # Reasonable limit for export
+    logs = await get_admin_audit_logs(limit=5000)
     
     if format.lower() == "csv":
-        # In a real implementation, this would generate CSV
-        return {"message": "CSV export would be generated here", "format": "csv", "count": len(logs)}
+        fields = [
+            "id", "at", "actor_id", "actor_email", "action", "target_user_id",
+            "target_email", "ip_address", "user_agent", "changes"
+        ]
+        out = io.StringIO()
+        writer = csv.DictWriter(out, fieldnames=fields)
+        writer.writeheader()
+        for r in logs:
+            writer.writerow({
+                "id": r.get("id"),
+                "at": r.get("at"),
+                "actor_id": r.get("actor_id"),
+                "actor_email": r.get("actor_email"),
+                "action": r.get("action"),
+                "target_user_id": r.get("target_user_id"),
+                "target_email": r.get("target_email"),
+                "ip_address": r.get("ip_address"),
+                "user_agent": r.get("user_agent"),
+                "changes": json.dumps(r.get("changes") or {}),
+            })
+        csv_data = out.getvalue()
+        return Response(
+            content=csv_data,
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=compliance_audit_export.csv"},
+        )
     elif format.lower() == "json":
         return {"data": logs, "format": "json", "count": len(logs)}
     else:

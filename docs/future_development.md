@@ -2,7 +2,7 @@
 
 This document tracks forward-looking engineering and product work beyond the current baseline.
 
-## Backend and Platform
+## API Platform and Services
 
 - Stronger service contracts (versioned APIs and compatibility tests)
 - Event-driven patterns for cross-service workflows where appropriate

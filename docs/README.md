@@ -12,4 +12,4 @@ Files:
 
 Related operational docs:
 
-- `microservices/README.md` — Day-to-day backend operations (install/start/stop/systemd/gate/rollback).
+- `microservices/README.md` — Day-to-day microservices operations (install/start/stop/systemd/gate/rollback).

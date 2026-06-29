@@ -16,9 +16,12 @@ from shared.jwt_utils import create_service_token, verify_service_token, create_
 from shared.security_middleware import verify_service_request, verify_user_request, require_service_auth, require_user_auth
 from shared.database_models import *
 from shared.database import SessionLocal
-from shared.repositories import UserRepository
+from shared.repositories import UserRepository, UserSecurityRepository
 from shared.utils import now_iso, hash_password, verify_password, SUPPORTED_COUNTRIES, LEGAL_TEMPLATES, _fill_template
 from shared.secrets_manager import init_infisical, get_secret
+
+# Initialize Infisical before importing routes to ensure module-level config can read loaded secrets.
+init_infisical()
 
 # Import local routers
 from .routes import auth_router, user_router, profile_router
@@ -26,6 +29,12 @@ from .routes import auth_router, user_router, profile_router
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger("client_index")
+
+CORS_ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("CORS_ORIGINS", "https://d31337m3.com,https://www.d31337m3.com,http://localhost:3000,http://127.0.0.1:3000").split(",")
+    if o.strip()
+]
 
 # Create FastAPI app
 app = FastAPI(
@@ -38,7 +47,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=CORS_ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -104,6 +113,23 @@ async def startup_event():
             logger.warning(f"Admin bootstrap warning: {e}")
         finally:
             db.close()
+
+    # Migration-safe defaults: ensure security rows exist for all users.
+    db = SessionLocal()
+    try:
+        users = UserRepository.list_all(db, skip=0, limit=100000)
+        created = 0
+        for u in users:
+            sec = UserSecurityRepository.get_by_user_id(db, u.id)
+            if not sec:
+                UserSecurityRepository.ensure(db, u.id, email_verified=True)
+                created += 1
+        if created:
+            logger.info(f"Backfilled user_security rows: {created}")
+    except Exception as e:
+        logger.warning(f"user_security backfill warning: {e}")
+    finally:
+        db.close()
 
     logger.info("Client Index Service started successfully")
 

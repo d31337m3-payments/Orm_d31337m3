@@ -206,6 +206,121 @@ class Signature(Base):
         }
 
 
+class UserSecurity(Base):
+    """Per-user auth security configuration."""
+    __tablename__ = "user_security"
+
+    user_id = Column(String(36), ForeignKey("users.id"), primary_key=True, index=True)
+    email_verified = Column(Boolean, default=True, nullable=False)
+    two_fa_enabled = Column(Boolean, default=False, nullable=False)
+    two_fa_method = Column(String(30), default="email", nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    def to_dict(self):
+        return {
+            "user_id": self.user_id,
+            "email_verified": self.email_verified,
+            "two_fa_enabled": self.two_fa_enabled,
+            "two_fa_method": self.two_fa_method,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class AuthChallenge(Base):
+    """Stores one-time OTP challenges for registration/login/2FA flows."""
+    __tablename__ = "auth_challenges"
+
+    id = Column(String(36), primary_key=True, index=True)
+    user_id = Column(String(36), ForeignKey("users.id"), index=True, nullable=True)
+    email = Column(String(255), index=True, nullable=False)
+    purpose = Column(String(50), index=True, nullable=False)
+    otp_hash = Column(String(128), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    consumed_at = Column(DateTime, nullable=True)
+    verified_at = Column(DateTime, nullable=True)
+    attempts = Column(Integer, default=0, nullable=False)
+    max_attempts = Column(Integer, default=5, nullable=False)
+    metadata_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    def to_dict(self):
+        metadata = None
+        if self.metadata_json:
+            try:
+                metadata = json.loads(self.metadata_json)
+            except Exception:
+                metadata = None
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "email": self.email,
+            "purpose": self.purpose,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+            "consumed_at": self.consumed_at.isoformat() if self.consumed_at else None,
+            "verified_at": self.verified_at.isoformat() if self.verified_at else None,
+            "attempts": self.attempts,
+            "max_attempts": self.max_attempts,
+            "metadata": metadata,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class TrustedDevice(Base):
+    """Trusted/recognized device records used for adaptive login challenges."""
+    __tablename__ = "trusted_devices"
+
+    id = Column(String(36), primary_key=True, index=True)
+    user_id = Column(String(36), ForeignKey("users.id"), index=True, nullable=False)
+    device_id = Column(String(255), nullable=False)
+    device_name = Column(String(120), nullable=True)
+    trusted_until = Column(DateTime, nullable=False)
+    last_seen_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "device_id": self.device_id,
+            "device_name": self.device_name,
+            "trusted_until": self.trusted_until.isoformat() if self.trusted_until else None,
+            "last_seen_at": self.last_seen_at.isoformat() if self.last_seen_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class AuthAudit(Base):
+    """Append-only authentication and security audit events."""
+    __tablename__ = "auth_audit"
+
+    id = Column(String(36), primary_key=True, index=True)
+    user_id = Column(String(36), ForeignKey("users.id"), index=True, nullable=True)
+    email = Column(String(255), index=True, nullable=True)
+    event = Column(String(80), index=True, nullable=False)
+    detail_json = Column(Text, nullable=True)
+    ip_address = Column(String(120), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    def to_dict(self):
+        detail = None
+        if self.detail_json:
+            try:
+                detail = json.loads(self.detail_json)
+            except Exception:
+                detail = None
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "email": self.email,
+            "event": self.event,
+            "detail": detail,
+            "ip_address": self.ip_address,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 def init_db():
     """Initialize database tables"""
     Base.metadata.create_all(bind=engine)

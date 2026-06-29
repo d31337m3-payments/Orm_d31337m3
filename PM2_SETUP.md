@@ -4,8 +4,8 @@ This file is kept only for historical context.
 
 ## Current Status
 
-PM2 is no longer the primary production process manager for backend services.
-Production backend runs as `systemd` services under `microservices/systemd/*.service`.
+PM2 is no longer the primary production process manager for API services.
+Production services run as `systemd` units under `microservices/systemd/*.service`.
 
 ## Use Instead
 

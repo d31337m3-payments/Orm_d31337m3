@@ -1,7 +1,7 @@
 # Android Admin App + Ops Services Plan
 
 ## Objective
-Build a mobile-only Android app for internal staff to administer the platform, and expand backend capabilities with:
+Build a mobile-only Android app for internal staff to administer the platform, and expand platform capabilities with:
 - Customer live support chat + trouble tickets
 - Employee scheduling + payroll operations
 - Host-level admin controls from the Admin Operations panel

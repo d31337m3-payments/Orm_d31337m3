@@ -8,6 +8,8 @@ from typing import Optional, List, Dict
 import os
 import logging
 import json
+import sqlite3
+import threading
 import aiohttp
 import asyncio
 import random
@@ -23,6 +25,7 @@ from shared.jwt_utils import create_service_token, verify_service_token, create_
 from shared.security_middleware import verify_service_request, verify_user_request, require_service_auth, require_user_auth
 from shared.database_models import *
 from shared.utils import now_iso, hash_password, verify_password, SUPPORTED_COUNTRIES, DATA_BROKERS, PLANS
+from shared.secrets_manager import get_secret
 
 # Import local models (would be defined in a models.py file)
 # For now, we'll define them inline or import from shared
@@ -36,6 +39,172 @@ scan_router = APIRouter()
 findings_router = APIRouter()
 keywords_router = APIRouter()
 broker_router = APIRouter()
+
+KEYWORDS_STORE: Dict[str, dict] = {}
+FINDINGS_STORE: Dict[str, dict] = {}
+SCANS_STORE: Dict[str, dict] = {}
+USER_KEYWORDS: Dict[str, List[str]] = {}
+USER_FINDINGS: Dict[str, List[str]] = {}
+USER_SCANS: Dict[str, List[str]] = {}
+
+MAX_KEYWORDS = int(os.environ.get("DATA_HANDLING_MAX_KEYWORDS", "200000"))
+MAX_FINDINGS = int(os.environ.get("DATA_HANDLING_MAX_FINDINGS", "1000000"))
+MAX_SCANS = int(os.environ.get("DATA_HANDLING_MAX_SCANS", "500000"))
+_db_lock = threading.Lock()
+
+
+def _db_path() -> str:
+    return get_secret("DATA_HANDLING_DB_PATH", os.environ.get("DATA_HANDLING_DB_PATH", "/tmp/d31337m3_data_handling.db")) or "/tmp/d31337m3_data_handling.db"
+
+
+def _db_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(_db_path())
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init_db() -> None:
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS keywords (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    value TEXT,
+                    type TEXT,
+                    last_scan_at TEXT,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    payload_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_keywords_user ON keywords(user_id)")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS findings (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    keyword_id TEXT,
+                    broker TEXT,
+                    url TEXT,
+                    discovered_at TEXT,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    payload_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_findings_user ON findings(user_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_findings_fp ON findings(user_id, keyword_id, broker, url)")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS scans (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    ran_at TEXT,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    payload_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_scans_user ON scans(user_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_scans_ran ON scans(ran_at)")
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _persist_keyword(keyword_data: dict) -> None:
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO keywords
+                (id, user_id, value, type, last_scan_at, created_at, updated_at, payload_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    keyword_data.get("id"),
+                    keyword_data.get("user_id"),
+                    keyword_data.get("value"),
+                    keyword_data.get("type"),
+                    keyword_data.get("last_scan_at"),
+                    keyword_data.get("created_at"),
+                    keyword_data.get("updated_at"),
+                    json.dumps(keyword_data),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _persist_finding(finding_data: dict) -> None:
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO findings
+                (id, user_id, keyword_id, broker, url, discovered_at, created_at, updated_at, payload_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    finding_data.get("id"),
+                    finding_data.get("user_id"),
+                    finding_data.get("keyword_id"),
+                    finding_data.get("broker"),
+                    finding_data.get("url"),
+                    finding_data.get("discovered_at"),
+                    finding_data.get("created_at"),
+                    finding_data.get("updated_at"),
+                    json.dumps(finding_data),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _persist_scan(scan_data: dict) -> None:
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO scans
+                (id, user_id, ran_at, created_at, updated_at, payload_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    scan_data.get("id"),
+                    scan_data.get("user_id"),
+                    scan_data.get("ran_at"),
+                    scan_data.get("created_at"),
+                    scan_data.get("updated_at"),
+                    json.dumps(scan_data),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+_init_db()
+
+
+def _trim_store(store: Dict[str, dict], max_items: int, sort_key: str = "created_at") -> None:
+    if len(store) <= max_items:
+        return
+    over = len(store) - max_items
+    ordered = sorted(store.items(), key=lambda kv: str(kv[1].get(sort_key, "")))
+    for key, _ in ordered[:over]:
+        store.pop(key, None)
 
 # Mock database functions (in a real implementation, these would connect to actual databases)
 async def get_user_by_email(email: str):
@@ -54,56 +223,138 @@ async def create_user(user_data: dict):
     return user_data
 
 async def get_keywords_by_user_id(user_id: str):
-    """Mock function to get keywords by user ID"""
-    # This would be replaced with actual database query
-    return []
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            rows = conn.execute(
+                "SELECT payload_json FROM keywords WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+                (user_id, MAX_KEYWORDS),
+            ).fetchall()
+            if rows:
+                return [json.loads(r["payload_json"]) for r in rows]
+        finally:
+            conn.close()
+    ids = USER_KEYWORDS.get(user_id, [])
+    return [KEYWORDS_STORE[k] for k in ids if k in KEYWORDS_STORE]
 
 async def get_keyword_by_id(keyword_id: str):
-    """Mock function to get keyword by ID"""
-    # This would be replaced with actual database query
-    return None
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            row = conn.execute("SELECT payload_json FROM keywords WHERE id = ?", (keyword_id,)).fetchone()
+            if row:
+                return json.loads(row["payload_json"])
+        finally:
+            conn.close()
+    return KEYWORDS_STORE.get(keyword_id)
 
 async def create_keyword(keyword_data: dict):
-    """Mock function to create a keyword"""
-    # This would be replaced with actual database insert
+    keyword_data.setdefault("created_at", now_iso())
+    _persist_keyword(keyword_data)
+    KEYWORDS_STORE[keyword_data["id"]] = keyword_data
+    USER_KEYWORDS.setdefault(keyword_data["user_id"], []).append(keyword_data["id"])
+    _trim_store(KEYWORDS_STORE, MAX_KEYWORDS)
     return keyword_data
 
 async def update_keyword(keyword_id: str, update_data: dict):
-    """Mock function to update a keyword"""
-    # This would be replaced with actual database update
-    return {**update_data, "id": keyword_id}
+    rec = KEYWORDS_STORE.get(keyword_id)
+    if not rec:
+        return None
+    rec.update(update_data)
+    rec["updated_at"] = now_iso()
+    _persist_keyword(rec)
+    return rec
 
 async def get_findings_by_user_id(user_id: str):
-    """Mock function to get findings by user ID"""
-    # This would be replaced with actual database query
-    return []
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            rows = conn.execute(
+                "SELECT payload_json FROM findings WHERE user_id = ? ORDER BY discovered_at DESC LIMIT ?",
+                (user_id, MAX_FINDINGS),
+            ).fetchall()
+            if rows:
+                return [json.loads(r["payload_json"]) for r in rows]
+        finally:
+            conn.close()
+    ids = USER_FINDINGS.get(user_id, [])
+    return [FINDINGS_STORE[f] for f in ids if f in FINDINGS_STORE]
 
 async def get_finding_by_id(finding_id: str):
-    """Mock function to get finding by ID"""
-    # This would be replaced with actual database query
+    if not finding_id:
+        return None
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            row = conn.execute("SELECT payload_json FROM findings WHERE id = ?", (finding_id,)).fetchone()
+            if row:
+                return json.loads(row["payload_json"])
+        finally:
+            conn.close()
+    return FINDINGS_STORE.get(finding_id)
+
+
+async def get_finding_by_fingerprint(user_id: str, keyword_id: str, broker: str, url: str):
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            row = conn.execute(
+                "SELECT payload_json FROM findings WHERE user_id = ? AND keyword_id = ? AND broker = ? AND url = ? LIMIT 1",
+                (user_id, keyword_id, broker, url),
+            ).fetchone()
+            if row:
+                return json.loads(row["payload_json"])
+        finally:
+            conn.close()
+    for fid in USER_FINDINGS.get(user_id, []):
+        item = FINDINGS_STORE.get(fid)
+        if not item:
+            continue
+        if item.get("keyword_id") == keyword_id and item.get("broker") == broker and item.get("url") == url:
+            return item
     return None
 
 async def create_finding(finding_data: dict):
-    """Mock function to create a finding"""
-    # This would be replaced with actual database insert
+    finding_data.setdefault("created_at", now_iso())
+    _persist_finding(finding_data)
+    FINDINGS_STORE[finding_data["id"]] = finding_data
+    USER_FINDINGS.setdefault(finding_data["user_id"], []).append(finding_data["id"])
+    _trim_store(FINDINGS_STORE, MAX_FINDINGS, "discovered_at")
     return finding_data
 
 async def update_finding(finding_id: str, update_data: dict):
-    """Mock function to update a finding"""
-    # This would be replaced with actual database update
-    return {**update_data, "id": finding_id}
+    rec = FINDINGS_STORE.get(finding_id)
+    if not rec:
+        return None
+    rec.update(update_data)
+    rec["updated_at"] = now_iso()
+    _persist_finding(rec)
+    return rec
 
 async def get_scans_by_user_id(user_id: str):
-    """Mock function to get scans by user ID"""
-    # This would be replaced with actual database query
-    return []
+    with _db_lock:
+        conn = _db_conn()
+        try:
+            rows = conn.execute(
+                "SELECT payload_json FROM scans WHERE user_id = ? ORDER BY ran_at DESC LIMIT ?",
+                (user_id, MAX_SCANS),
+            ).fetchall()
+            if rows:
+                return [json.loads(r["payload_json"]) for r in rows]
+        finally:
+            conn.close()
+    ids = USER_SCANS.get(user_id, [])
+    return [SCANS_STORE[s] for s in ids if s in SCANS_STORE]
 
 async def create_scan(scan_data: dict):
-    """Mock function to create a scan"""
-    # This would be replaced with actual database insert
+    scan_data.setdefault("created_at", now_iso())
+    _persist_scan(scan_data)
+    SCANS_STORE[scan_data["id"]] = scan_data
+    USER_SCANS.setdefault(scan_data["user_id"], []).append(scan_data["id"])
+    _trim_store(SCANS_STORE, MAX_SCANS, "ran_at")
     return scan_data
 
-# Data scraping and enrichment functions (moved from backend/server.py)
+# Data scraping and enrichment functions for microservices scanning flow
 async def real_scrape_for_keyword(keyword_value: str, kw_type: str) -> list[dict]:
     """
     Performs a real HTTP probe across data broker URLs + Google & Bing search results
@@ -195,7 +446,7 @@ async def run_scan_for_user(user_id: str, keyword_ids: Optional[list[str]] = Non
         findings = await real_scrape_for_keyword(kw["value"], kw["type"])
         for f in findings:
             # dedupe by (broker,url,user_id,keyword_id)
-            existing = await get_finding_by_id(None)  # Simplified for mock - would check for duplicates
+            existing = await get_finding_by_fingerprint(user_id, kw["id"], f["broker"], f["url"])
             if existing:
                 continue
             doc = {
@@ -240,8 +491,7 @@ async def scan_and_notify(user_id: str, user_email: str, keyword_ids: Optional[l
 # Email service mock (can be replaced with real implementation)
 async def send_email_mock(to: str, subject: str, body: str, attachments: Optional[List[Dict]] = None) -> bool:
     """Mock email service for development"""
-    # In production, this would be replaced with real email sending
-    print(f"[EMAIL-MOCK] to={to} subject={subject!r}")
+    logger.info(f"[EMAIL-MOCK] to={to} subject={subject!r}")
     return True
 
 # Pydantic models (imported from shared or defined locally)

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import adminApi from "@/lib/adminApi";
 
 export default function AdminSupportPanel() {
@@ -12,7 +12,7 @@ export default function AdminSupportPanel() {
   const [ticketSubject, setTicketSubject] = useState("Support request from live chat");
   const [ticketDesc, setTicketDesc] = useState("");
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     setLoading(true);
     setNotice("");
     try {
@@ -29,9 +29,9 @@ export default function AdminSupportPanel() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedChat]);
 
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => { refresh(); }, [refresh]);
 
   const openChat = async (chat) => {
     try {

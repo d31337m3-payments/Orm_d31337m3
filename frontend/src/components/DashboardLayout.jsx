@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
 import CanadaFlag from "@/components/CanadaFlag";
 import SupportChatWidget from "@/components/SupportChatWidget";
-import { LayoutDashboard, KeyRound, Search, CreditCard, ShieldAlert, LogOut, Terminal, FileText } from "lucide-react";
+import { LayoutDashboard, KeyRound, Search, CreditCard, ShieldAlert, LogOut, Terminal, FileText, Shield } from "lucide-react";
 
 const NavLink = ({ to, icon: Icon, label, testid }) => {
   const loc = useLocation();
@@ -38,6 +38,7 @@ export default function DashboardLayout({ children, title }) {
           <NavLink to="/keywords" icon={KeyRound} label="Keywords" testid="nav-keywords" />
           <NavLink to="/findings" icon={Search} label="Findings" testid="nav-findings" />
           <NavLink to="/documents" icon={FileText} label="Documents" testid="nav-documents" />
+          <NavLink to="/security" icon={Shield} label="Security" testid="nav-security" />
           <NavLink to="/billing" icon={CreditCard} label="Billing" testid="nav-billing" />
           {user?.is_admin && <NavLink to="/admin" icon={ShieldAlert} label="Admin" testid="nav-admin" />}
         </nav>

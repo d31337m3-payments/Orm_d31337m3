@@ -9,6 +9,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 import sys
+# Initialize Infisical before importing routes to ensure module-level config can read loaded secrets.
+init_infisical()
+
 sys.path.append('/home/D31337m3/Orm_d31337m3/microservices/shared')
 
 from shared.database_models import now_iso
@@ -19,6 +22,12 @@ from .routes import support_router
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger("support_hub")
 
+CORS_ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("CORS_ORIGINS", "https://d31337m3.com,https://www.d31337m3.com,http://localhost:3000,http://127.0.0.1:3000").split(",")
+    if o.strip()
+]
+
 app = FastAPI(
     title="Support Hub Service",
     description="Live support chat and trouble ticket management",
@@ -28,7 +37,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=CORS_ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -1,6 +1,6 @@
-# Agent Go-Live Guideline for Backend Microservices
+# Agent Go-Live Guideline for API Microservices
 
-This guide is the execution playbook for the final steps to bring backend microservices live and production ready.
+This guide is the execution playbook for the final steps to bring API microservices live and production ready.
 
 Scope:
 - `payments`

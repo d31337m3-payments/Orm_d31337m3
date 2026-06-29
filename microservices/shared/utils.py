@@ -308,12 +308,29 @@ async def send_email_mock(to: str, subject: str, body: str, attachments: Optiona
 RATE_LIMITS: Dict[str, List[float]] = {}
 RATE_WINDOW_SEC = 60 * 15  # 15 minutes
 RATE_MAX_ATTEMPTS = 8
+RATE_LIMIT_MAX_KEYS = int(os.environ.get("RATE_LIMIT_MAX_KEYS", "50000"))
 
 def _ratelimit(key: str) -> tuple[bool, int]:
     """Return (allowed, retry_after_seconds)"""
     import time as _t
     now = _t.time()
+    if len(RATE_LIMITS) > RATE_LIMIT_MAX_KEYS:
+        # Drop empty buckets first; if still too large, drop oldest active buckets.
+        for k in list(RATE_LIMITS.keys()):
+            if not RATE_LIMITS.get(k):
+                RATE_LIMITS.pop(k, None)
+        if len(RATE_LIMITS) > RATE_LIMIT_MAX_KEYS:
+            oldest = sorted(
+                RATE_LIMITS.items(),
+                key=lambda kv: kv[1][0] if kv[1] else now,
+            )
+            for k, _ in oldest[: max(1, len(RATE_LIMITS) - RATE_LIMIT_MAX_KEYS)]:
+                RATE_LIMITS.pop(k, None)
+
     bucket = [t for t in RATE_LIMITS.get(key, []) if now - t < RATE_WINDOW_SEC]
+    if not bucket and key in RATE_LIMITS:
+        RATE_LIMITS.pop(key, None)
+        bucket = []
     if len(bucket) >= RATE_MAX_ATTEMPTS:
         oldest = bucket[0]
         return False, int(RATE_WINDOW_SEC - (now - oldest))

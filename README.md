@@ -3,12 +3,12 @@
 Full-stack privacy and reputation management platform with:
 
 - React frontend (`frontend/`)
-- Microservices backend (`microservices/`)
+- API microservices stack (`microservices/`)
 - Nginx edge routing (`nginx-d31337m3.conf` + `setup-nginx.sh`)
 
 ## Current Implementation
 
-Backend is organized as microservices:
+API services are organized as microservices:
 
 - `client_index` (`8002`)
 - `payments` (`8003`)

@@ -6,9 +6,10 @@ Handles database operations for user authentication and profiles
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 import logging
-from shared.database import User, Profile, Keyword
+from shared.database import User, Profile, Keyword, UserSecurity, AuthChallenge, TrustedDevice, AuthAudit
 from shared.database_models import generate_id, now_iso
 from datetime import datetime, timezone
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -223,3 +224,198 @@ class KeywordRepository:
             db.rollback()
             logger.error(f"Error deleting keyword: {e}")
             raise
+
+
+class UserSecurityRepository:
+    """Repository for user security preferences and verification state."""
+
+    @staticmethod
+    def get_by_user_id(db: Session, user_id: str) -> UserSecurity:
+        return db.query(UserSecurity).filter(UserSecurity.user_id == user_id).first()
+
+    @staticmethod
+    def ensure(db: Session, user_id: str, email_verified: bool = True) -> UserSecurity:
+        rec = UserSecurityRepository.get_by_user_id(db, user_id)
+        if rec:
+            return rec
+        rec = UserSecurity(
+            user_id=user_id,
+            email_verified=email_verified,
+            two_fa_enabled=False,
+            two_fa_method="email",
+        )
+        db.add(rec)
+        db.commit()
+        db.refresh(rec)
+        return rec
+
+    @staticmethod
+    def update(db: Session, user_id: str, update_data: dict) -> UserSecurity:
+        rec = UserSecurityRepository.get_by_user_id(db, user_id)
+        if not rec:
+            rec = UserSecurityRepository.ensure(db, user_id, email_verified=True)
+        for key, value in update_data.items():
+            if hasattr(rec, key):
+                setattr(rec, key, value)
+        rec.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(rec)
+        return rec
+
+
+class AuthChallengeRepository:
+    """Repository for one-time auth challenges."""
+
+    @staticmethod
+    def create(db: Session, data: dict) -> AuthChallenge:
+        rec = AuthChallenge(
+            id=data.get("id") or generate_id(),
+            user_id=data.get("user_id"),
+            email=data["email"].lower(),
+            purpose=data["purpose"],
+            otp_hash=data["otp_hash"],
+            expires_at=data["expires_at"],
+            consumed_at=data.get("consumed_at"),
+            verified_at=data.get("verified_at"),
+            attempts=data.get("attempts", 0),
+            max_attempts=data.get("max_attempts", 5),
+            metadata_json=json.dumps(data.get("metadata") or {}),
+        )
+        db.add(rec)
+        db.commit()
+        db.refresh(rec)
+        return rec
+
+    @staticmethod
+    def get_by_id(db: Session, challenge_id: str) -> AuthChallenge:
+        return db.query(AuthChallenge).filter(AuthChallenge.id == challenge_id).first()
+
+    @staticmethod
+    def mark_attempt(db: Session, challenge_id: str, attempts: int) -> AuthChallenge:
+        rec = AuthChallengeRepository.get_by_id(db, challenge_id)
+        if not rec:
+            return None
+        rec.attempts = attempts
+        db.commit()
+        db.refresh(rec)
+        return rec
+
+    @staticmethod
+    def mark_verified_and_consumed(db: Session, challenge_id: str) -> AuthChallenge:
+        rec = AuthChallengeRepository.get_by_id(db, challenge_id)
+        if not rec:
+            return None
+        now = datetime.now(timezone.utc)
+        rec.verified_at = now
+        rec.consumed_at = now
+        db.commit()
+        db.refresh(rec)
+        return rec
+
+    @staticmethod
+    def metadata(rec: AuthChallenge) -> dict:
+        if not rec or not rec.metadata_json:
+            return {}
+        try:
+            return json.loads(rec.metadata_json)
+        except Exception:
+            return {}
+
+
+class TrustedDeviceRepository:
+    """Repository for recognized/trusted devices."""
+
+    @staticmethod
+    def get_active(db: Session, user_id: str, device_id: str) -> TrustedDevice:
+        now = datetime.now(timezone.utc)
+        return (
+            db.query(TrustedDevice)
+            .filter(
+                TrustedDevice.user_id == user_id,
+                TrustedDevice.device_id == device_id,
+                TrustedDevice.trusted_until > now,
+            )
+            .first()
+        )
+
+    @staticmethod
+    def list_for_user(db: Session, user_id: str) -> list:
+        return (
+            db.query(TrustedDevice)
+            .filter(TrustedDevice.user_id == user_id)
+            .order_by(TrustedDevice.last_seen_at.desc(), TrustedDevice.created_at.desc())
+            .all()
+        )
+
+    @staticmethod
+    def upsert(db: Session, user_id: str, device_id: str, trusted_until, device_name: str = None) -> TrustedDevice:
+        rec = (
+            db.query(TrustedDevice)
+            .filter(TrustedDevice.user_id == user_id, TrustedDevice.device_id == device_id)
+            .first()
+        )
+        now = datetime.now(timezone.utc)
+        if rec:
+            rec.trusted_until = trusted_until
+            rec.last_seen_at = now
+            if device_name:
+                rec.device_name = device_name
+        else:
+            rec = TrustedDevice(
+                id=generate_id(),
+                user_id=user_id,
+                device_id=device_id,
+                device_name=device_name,
+                trusted_until=trusted_until,
+                last_seen_at=now,
+            )
+            db.add(rec)
+        db.commit()
+        db.refresh(rec)
+        return rec
+
+    @staticmethod
+    def touch(db: Session, user_id: str, device_id: str) -> TrustedDevice:
+        rec = (
+            db.query(TrustedDevice)
+            .filter(TrustedDevice.user_id == user_id, TrustedDevice.device_id == device_id)
+            .first()
+        )
+        if not rec:
+            return None
+        rec.last_seen_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(rec)
+        return rec
+
+    @staticmethod
+    def revoke(db: Session, user_id: str, trusted_device_id: str) -> bool:
+        rec = (
+            db.query(TrustedDevice)
+            .filter(TrustedDevice.user_id == user_id, TrustedDevice.id == trusted_device_id)
+            .first()
+        )
+        if not rec:
+            return False
+        db.delete(rec)
+        db.commit()
+        return True
+
+
+class AuthAuditRepository:
+    """Append-only security event logging for authentication actions."""
+
+    @staticmethod
+    def append(db: Session, event: str, user_id: str = None, email: str = None, detail: dict = None, ip_address: str = None) -> AuthAudit:
+        rec = AuthAudit(
+            id=generate_id(),
+            user_id=user_id,
+            email=(email or "").lower() if email else None,
+            event=event,
+            detail_json=json.dumps(detail or {}),
+            ip_address=ip_address,
+        )
+        db.add(rec)
+        db.commit()
+        db.refresh(rec)
+        return rec

@@ -19,12 +19,21 @@ from shared.database_models import *
 from shared.utils import now_iso, hash_password, verify_password, SUPPORTED_COUNTRIES
 from shared.secrets_manager import init_infisical
 
+# Initialize Infisical before importing routes to ensure module-level config can read loaded secrets.
+init_infisical()
+
 # Import local routers
 from .routes import health_router, metrics_router, alert_router
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger("watchdog")
+
+CORS_ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("CORS_ORIGINS", "https://d31337m3.com,https://www.d31337m3.com,http://localhost:3000,http://127.0.0.1:3000").split(",")
+    if o.strip()
+]
 
 # Create FastAPI app
 app = FastAPI(
@@ -37,7 +46,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=CORS_ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )

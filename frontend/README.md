@@ -24,4 +24,4 @@ The admin interface includes operations workflows for:
 - health and telemetry visibility
 - service-state actions through orchestrator-compatible endpoints
 
-For backend operations and deployment controls, see `microservices/README.md`.
+For microservices operations and deployment controls, see `microservices/README.md`.

@@ -6,7 +6,7 @@ This roadmap reflects the current microservices-based implementation.
 
 - Operational hardening
   - Finalize production runbooks and on-call handoff
-  - Add CI checks for backend/frontend builds and smoke tests
+  - Add CI checks for microservices/frontend builds and smoke tests
   - Validate backup/restore and rollback drills
 - Admin control surface
   - Continue expanding admin operations for service and payment workflows

@@ -202,7 +202,6 @@ export default function Landing() {
   const [waitlistNote, setWaitlistNote] = useState("");
   const { scrollY } = useScroll();
   const heroY = useTransform(scrollY, [0, 500], [0, 150]);
-  const heroOpacity = useTransform(scrollY, [0, 400], [1, 0.2]);
 
   const launchDate = new Date("2026-07-01T00:00:00Z");
   const isLaunchLive = nowTs >= launchDate.getTime();
@@ -313,7 +312,7 @@ export default function Landing() {
       </nav>
 
       {/* Hero */}
-      <motion.section style={{ y: heroY, opacity: heroOpacity }} className="hero-grain px-8 pt-24 pb-20 border-b border-[#222] relative">
+      <motion.section style={{ y: heroY }} className="hero-grain px-8 pt-24 pb-20 border-b border-[#222] relative">
         <div className="max-w-7xl mx-auto grid grid-cols-12 gap-6">
           <div className="col-span-12 md:col-span-8">
             <motion.div
@@ -383,13 +382,13 @@ export default function Landing() {
                 className="mt-6 brutal-card border border-[#222] bg-black/70 p-5 max-w-xl">
                 <div className="overline text-[#00FF41] mb-2">// launch countdown</div>
                 <div className="grid grid-cols-4 gap-2 mb-5 font-mono text-center">
-                  <div className="border border-[#222] p-3"><div className="text-2xl text-white font-black">{countdown.days}</div><div className="text-[10px] text-zinc-500 uppercase tracking-widest">Days</div></div>
-                  <div className="border border-[#222] p-3"><div className="text-2xl text-white font-black">{String(countdown.hours).padStart(2, "0")}</div><div className="text-[10px] text-zinc-500 uppercase tracking-widest">Hours</div></div>
-                  <div className="border border-[#222] p-3"><div className="text-2xl text-white font-black">{String(countdown.minutes).padStart(2, "0")}</div><div className="text-[10px] text-zinc-500 uppercase tracking-widest">Min</div></div>
-                  <div className="border border-[#222] p-3"><div className="text-2xl text-white font-black">{String(countdown.seconds).padStart(2, "0")}</div><div className="text-[10px] text-zinc-500 uppercase tracking-widest">Sec</div></div>
+                  <div className="border border-[#2f2f2f] bg-[#070707] p-3"><div className="text-2xl text-white font-black">{countdown.days}</div><div className="text-[10px] text-zinc-300 uppercase tracking-widest">Days</div></div>
+                  <div className="border border-[#2f2f2f] bg-[#070707] p-3"><div className="text-2xl text-white font-black">{String(countdown.hours).padStart(2, "0")}</div><div className="text-[10px] text-zinc-300 uppercase tracking-widest">Hours</div></div>
+                  <div className="border border-[#2f2f2f] bg-[#070707] p-3"><div className="text-2xl text-white font-black">{String(countdown.minutes).padStart(2, "0")}</div><div className="text-[10px] text-zinc-300 uppercase tracking-widest">Min</div></div>
+                  <div className="border border-[#2f2f2f] bg-[#070707] p-3"><div className="text-2xl text-white font-black">{String(countdown.seconds).padStart(2, "0")}</div><div className="text-[10px] text-zinc-300 uppercase tracking-widest">Sec</div></div>
                 </div>
                 <div className="font-display text-xl mb-2">Join the waitlist</div>
-                <p className="font-mono text-sm text-zinc-400 mb-4">Sign up before July 1 to lock in <span className="text-white font-bold">{signupDiscount} off for 6 months</span>. Registration stays closed to the public until launch day.</p>
+                <p className="font-mono text-sm text-zinc-200 mb-4">Sign up before July 1 to lock in <span className="text-white font-bold">{signupDiscount} off for 6 months</span>. Registration stays closed to the public until launch day.</p>
                 <div className="flex flex-col gap-3">
                   <input
                     type="email"
@@ -424,7 +423,7 @@ export default function Landing() {
                     Join Waitlist
                   </button>
                 </div>
-                <div className="mt-3 font-mono text-xs text-zinc-500">
+                <div className="mt-3 font-mono text-xs text-zinc-300">
                   {julyPromoActive ? (
                     <>July launch signups: <span className="text-white">50% off for 6 months</span>. Waitlist signups before launch keep <span className="text-white">75% off for 6 months</span>.</>
                   ) : (

@@ -1,6 +1,6 @@
 # Installation and Deployment
 
-This repository runs on a React frontend plus a microservices backend.
+This repository runs on a React frontend plus an API microservices stack.
 
 ## Prerequisites
 

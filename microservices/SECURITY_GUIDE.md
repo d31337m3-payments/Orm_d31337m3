@@ -162,8 +162,8 @@ For each service, ensure:
 ### 7. Next Steps (Stage 3)
 
 After establishing security boundaries, proceed to:
-- Split the existing backend repository into separate service packages
+- Finalize service package boundaries for all microservices
 - Extract shared libraries into common packages
-- Retain current backend as coordination layer during refactor
-- Begin building individual services starting with client_index
+- Keep orchestrator as the only API ingress coordination layer
+- Continue hardening individual services starting with client_index
 

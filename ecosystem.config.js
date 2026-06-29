@@ -1,8 +1,8 @@
 module.exports = {
   apps: [
     {
-      name: "backend",
-      script: "./backend/server.py",
+      name: "orchestrator",
+      script: "./microservices/orchestrator/service/main.py",
       interpreter: "python3",
       instances: 1,
       autorestart: true,
@@ -10,7 +10,7 @@ module.exports = {
       max_memory_restart: "1G",
       env: {
         NODE_ENV: "development",
-        PORT: 8000,
+        PORT: 8006,
       },
     },
     {

@@ -3,9 +3,9 @@ API Routes for Orchestrator Service
 Contains service discovery, registration, and lifecycle management endpoints
 """
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Security
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Security, Request
 from typing import Dict, List, Optional, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 import os
 import logging
 import json
@@ -14,6 +14,12 @@ import ssl
 import subprocess
 import urllib.request
 import urllib.error
+import sqlite3
+import threading
+import random
+import time
+import hmac
+import hashlib
 from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
 
@@ -55,9 +61,265 @@ DOCUMENTS: List[Dict[str, Any]] = []
 SUPPORT_CHATS: Dict[str, Dict[str, Any]] = {}
 SUPPORT_MESSAGES: Dict[str, List[Dict[str, Any]]] = {}
 SUPPORT_TICKETS: Dict[str, Dict[str, Any]] = {}
+SUPPORT_ANON_CHALLENGES: Dict[str, Dict[str, Any]] = {}
+SUPPORT_ANON_SESSIONS: Dict[str, Dict[str, Any]] = {}
 WORKFORCE_SHIFTS: Dict[str, Dict[str, Any]] = {}
 WORKFORCE_TIMESHEETS: Dict[str, Dict[str, Any]] = {}
 WORKFORCE_PAYROLL_RUNS: Dict[str, Dict[str, Any]] = {}
+
+_support_db_lock = threading.Lock()
+
+
+def _cfg_int(key: str, default: int) -> int:
+    return int(get_secret(key, str(default)) or str(default))
+
+
+def _support_anon_otp_ttl_minutes() -> int:
+    return _cfg_int("SUPPORT_ANON_OTP_TTL_MINUTES", 10)
+
+
+def _support_anon_otp_max_attempts() -> int:
+    return _cfg_int("SUPPORT_ANON_OTP_MAX_ATTEMPTS", 5)
+
+
+def _support_anon_session_hours() -> int:
+    return _cfg_int("SUPPORT_ANON_SESSION_HOURS", 12)
+
+
+def _support_anon_verified_challenge_retention_seconds() -> int:
+    return _cfg_int("SUPPORT_ANON_VERIFIED_CHALLENGE_RETENTION_SECONDS", 1800)
+
+
+def support_anon_cleanup_interval_seconds() -> int:
+    return _cfg_int("SUPPORT_ANON_CLEANUP_INTERVAL_SECONDS", 300)
+
+
+def _max_audit_log_entries() -> int:
+    return _cfg_int("MAX_AUDIT_LOG_ENTRIES", 100000)
+
+
+def _max_email_log_entries() -> int:
+    return _cfg_int("MAX_EMAIL_LOG_ENTRIES", 20000)
+
+
+def _max_payments_entries() -> int:
+    return _cfg_int("MAX_PAYMENTS_ENTRIES", 50000)
+
+
+def _max_removals_entries() -> int:
+    return _cfg_int("MAX_REMOVALS_ENTRIES", 50000)
+
+
+def _max_documents_entries() -> int:
+    return _cfg_int("MAX_DOCUMENTS_ENTRIES", 50000)
+
+
+def _max_support_chats() -> int:
+    return _cfg_int("MAX_SUPPORT_CHATS", 20000)
+
+
+def _max_support_messages_per_chat() -> int:
+    return _cfg_int("MAX_SUPPORT_MESSAGES_PER_CHAT", 2000)
+
+
+def _support_db_path() -> str:
+    return get_secret("ORCHESTRATOR_SUPPORT_DB_PATH", os.environ.get("ORCHESTRATOR_SUPPORT_DB_PATH", "/tmp/d31337m3_orchestrator_support.db")) or "/tmp/d31337m3_orchestrator_support.db"
+
+
+class SupportAnonStartIn(BaseModel):
+    email: EmailStr
+
+
+class SupportAnonVerifyIn(BaseModel):
+    challenge_id: str
+    email: EmailStr
+    otp: str
+
+
+class SupportAnonResendIn(BaseModel):
+    challenge_id: str
+    email: EmailStr
+
+
+class SupportAnonMessageIn(BaseModel):
+    session_token: str
+    text: str
+
+
+def _support_db_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(_support_db_path())
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init_support_db() -> None:
+    with _support_db_lock:
+        conn = _support_db_conn()
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS support_chats (
+                    id TEXT PRIMARY KEY,
+                    customer_id TEXT,
+                    customer_email TEXT,
+                    status TEXT,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    payload_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_support_chats_customer ON support_chats(customer_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_support_chats_updated ON support_chats(updated_at)")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS support_messages (
+                    id TEXT PRIMARY KEY,
+                    chat_id TEXT NOT NULL,
+                    sent_at TEXT,
+                    payload_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_support_messages_chat ON support_messages(chat_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_support_messages_sent ON support_messages(sent_at)")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS support_tickets (
+                    id TEXT PRIMARY KEY,
+                    customer_id TEXT,
+                    customer_email TEXT,
+                    chat_id TEXT,
+                    status TEXT,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    payload_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_support_tickets_customer ON support_tickets(customer_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_support_tickets_chat ON support_tickets(chat_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_support_tickets_updated ON support_tickets(updated_at)")
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _persist_support_chat(chat: dict) -> None:
+    with _support_db_lock:
+        conn = _support_db_conn()
+        try:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO support_chats
+                (id, customer_id, customer_email, status, created_at, updated_at, payload_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    chat.get("id"),
+                    chat.get("customer_id"),
+                    chat.get("customer_email"),
+                    chat.get("status"),
+                    chat.get("created_at"),
+                    chat.get("updated_at"),
+                    json.dumps(chat),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _persist_support_message(message: dict) -> None:
+    with _support_db_lock:
+        conn = _support_db_conn()
+        try:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO support_messages
+                (id, chat_id, sent_at, payload_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    message.get("id"),
+                    message.get("chat_id"),
+                    message.get("sent_at"),
+                    json.dumps(message),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _persist_support_ticket(ticket: dict) -> None:
+    with _support_db_lock:
+        conn = _support_db_conn()
+        try:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO support_tickets
+                (id, customer_id, customer_email, chat_id, status, created_at, updated_at, payload_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ticket.get("id"),
+                    ticket.get("customer_id"),
+                    ticket.get("customer_email"),
+                    ticket.get("chat_id"),
+                    ticket.get("status"),
+                    ticket.get("created_at"),
+                    ticket.get("updated_at"),
+                    json.dumps(ticket),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _delete_support_chat(chat_id: str) -> None:
+    with _support_db_lock:
+        conn = _support_db_conn()
+        try:
+            conn.execute("DELETE FROM support_messages WHERE chat_id = ?", (chat_id,))
+            conn.execute("DELETE FROM support_tickets WHERE chat_id = ?", (chat_id,))
+            conn.execute("DELETE FROM support_chats WHERE id = ?", (chat_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _load_support_state() -> None:
+    with _support_db_lock:
+        conn = _support_db_conn()
+        try:
+            for row in conn.execute("SELECT payload_json FROM support_chats"):
+                try:
+                    chat = json.loads(row["payload_json"])
+                    SUPPORT_CHATS[chat["id"]] = chat
+                except Exception:
+                    continue
+
+            for row in conn.execute("SELECT payload_json FROM support_messages ORDER BY sent_at ASC"):
+                try:
+                    msg = json.loads(row["payload_json"])
+                    SUPPORT_MESSAGES.setdefault(msg.get("chat_id"), []).append(msg)
+                except Exception:
+                    continue
+
+            for row in conn.execute("SELECT payload_json FROM support_tickets"):
+                try:
+                    ticket = json.loads(row["payload_json"])
+                    SUPPORT_TICKETS[ticket["id"]] = ticket
+                except Exception:
+                    continue
+        finally:
+            conn.close()
+
+
+_init_support_db()
+_load_support_state()
 
 async def verify_admin_or_service(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearing)
@@ -124,6 +386,232 @@ def _ensure_chat_access(chat_id: str, payload: dict) -> Dict[str, Any]:
 
 def _chat_ticket_count(chat_id: str) -> int:
     return sum(1 for t in SUPPORT_TICKETS.values() if t.get("chat_id") == chat_id)
+
+
+def _mask_email(email: str) -> str:
+    try:
+        local, domain = email.split("@", 1)
+    except ValueError:
+        return "***"
+    if len(local) <= 2:
+        local_masked = local[0] + "*"
+    else:
+        local_masked = local[:2] + "*" * max(1, len(local) - 2)
+    return f"{local_masked}@{domain}"
+
+
+def _support_otp_digest(email: str, purpose: str, otp: str) -> str:
+    secret = get_secret("JWT_SECRET", "dev-secret") or "dev-secret"
+    msg = f"{email.lower()}|{purpose}|{otp}".encode("utf-8")
+    return hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+
+
+def _support_generate_otp() -> str:
+    return f"{random.randint(0, 999999):06d}"
+
+
+def _ratelimit(key: str, max_attempts: int, window_seconds: int) -> tuple[bool, int]:
+    now = time.time()
+    bucket = [t for t in RATE_LIMITS.get(key, []) if now - t < window_seconds]
+    RATE_LIMITS[key] = bucket
+    if len(bucket) >= max_attempts:
+        retry = int(window_seconds - (now - bucket[0]))
+        return False, max(1, retry)
+    bucket.append(now)
+    RATE_LIMITS[key] = bucket
+    return True, 0
+
+
+def _send_email_sync(to: str, subject: str, body: str) -> bool:
+    smtp_enabled = _env_bool("SMTP_ENABLED", False)
+    if not smtp_enabled:
+        logger.info(f"[EMAIL-MOCK] to={to} subject={subject}")
+        EMAIL_LOG.append({
+            "id": generate_id(),
+            "to": to,
+            "subject": subject,
+            "body": body,
+            "mocked": True,
+            "delivered": True,
+            "sent_at": now_iso(),
+        })
+        return True
+
+    smtp_host = _secret("SMTP_HOST")
+    smtp_port = int(_secret("SMTP_PORT", "465") or "465")
+    smtp_username = _secret("SMTP_USERNAME")
+    smtp_password = _secret("SMTP_PASSWORD")
+    smtp_from = _secret("SMTP_FROM") or smtp_username
+    if not smtp_host or not smtp_username or not smtp_password or not smtp_from:
+        logger.error("SMTP enabled but config is incomplete")
+        return False
+
+    msg = EmailMessage()
+    msg["From"] = smtp_from
+    msg["To"] = to
+    msg["Subject"] = subject
+    msg.set_content(body)
+
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, context=ctx, timeout=20) as server:
+            server.login(smtp_username, smtp_password)
+            server.send_message(msg)
+        EMAIL_LOG.append({
+            "id": generate_id(),
+            "to": to,
+            "subject": subject,
+            "body": body,
+            "mocked": False,
+            "delivered": True,
+            "sent_at": now_iso(),
+        })
+        return True
+    except Exception as e:
+        logger.error(f"support anon email send failed: {e}")
+        EMAIL_LOG.append({
+            "id": generate_id(),
+            "to": to,
+            "subject": subject,
+            "body": body,
+            "mocked": False,
+            "delivered": False,
+            "error": str(e),
+            "sent_at": now_iso(),
+        })
+        return False
+
+
+def _create_anon_chat(email: str) -> Dict[str, Any]:
+    for c in SUPPORT_CHATS.values():
+        if c.get("customer_id") is None and c.get("customer_email") == email and c.get("status") in ["open", "waiting", "active"]:
+            return c
+
+    chat_id = generate_id()
+    chat = {
+        "id": chat_id,
+        "customer_id": None,
+        "customer_email": email,
+        "status": "open",
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+        "last_message_at": None,
+        "source": "anonymous",
+    }
+    SUPPORT_CHATS[chat_id] = chat
+    SUPPORT_MESSAGES[chat_id] = []
+    _persist_support_chat(chat)
+    return chat
+
+
+def _require_anon_session(session_token: str, chat_id: str, request: Request) -> Dict[str, Any]:
+    session = SUPPORT_ANON_SESSIONS.get(session_token)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid anonymous session")
+    if session.get("chat_id") != chat_id:
+        raise HTTPException(status_code=403, detail="Session not authorized for this chat")
+    expires_at = session.get("expires_at")
+    if not expires_at or datetime.fromisoformat(expires_at) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=401, detail="Anonymous session expired")
+    ip = request.client.host if request.client else "anon"
+    if session.get("ip") != ip:
+        raise HTTPException(status_code=403, detail="Session IP mismatch")
+    return session
+
+
+def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return None
+
+
+def run_support_state_cleanup() -> Dict[str, int]:
+    """Prune expired anonymous OTP challenges/sessions from in-memory stores."""
+    now_dt = datetime.now(timezone.utc)
+    removed_challenges = 0
+    removed_sessions = 0
+    trimmed_audit = 0
+    trimmed_email = 0
+    trimmed_payments = 0
+    trimmed_removals = 0
+    trimmed_documents = 0
+    removed_chats = 0
+    trimmed_messages = 0
+
+    for challenge_id, challenge in list(SUPPORT_ANON_CHALLENGES.items()):
+        expires_at = _parse_iso_datetime(challenge.get("expires_at"))
+        created_at = _parse_iso_datetime(challenge.get("created_at"))
+        is_verified = bool(challenge.get("verified"))
+        expired = bool(expires_at and expires_at < now_dt)
+        stale_verified = bool(
+            is_verified
+            and created_at
+            and (now_dt - created_at).total_seconds() > _support_anon_verified_challenge_retention_seconds()
+        )
+        if expired or stale_verified:
+            SUPPORT_ANON_CHALLENGES.pop(challenge_id, None)
+            removed_challenges += 1
+
+    for session_token, session in list(SUPPORT_ANON_SESSIONS.items()):
+        expires_at = _parse_iso_datetime(session.get("expires_at"))
+        chat_id = session.get("chat_id")
+        expired = bool(expires_at and expires_at < now_dt)
+        missing_chat = bool(chat_id and chat_id not in SUPPORT_CHATS)
+        if expired or missing_chat:
+            SUPPORT_ANON_SESSIONS.pop(session_token, None)
+            removed_sessions += 1
+
+    if len(AUDIT_LOG) > _max_audit_log_entries():
+        trimmed_audit = len(AUDIT_LOG) - _max_audit_log_entries()
+        del AUDIT_LOG[:trimmed_audit]
+
+    if len(EMAIL_LOG) > _max_email_log_entries():
+        trimmed_email = len(EMAIL_LOG) - _max_email_log_entries()
+        del EMAIL_LOG[:trimmed_email]
+
+    if len(PAYMENTS) > _max_payments_entries():
+        trimmed_payments = len(PAYMENTS) - _max_payments_entries()
+        del PAYMENTS[:trimmed_payments]
+
+    if len(REMOVALS) > _max_removals_entries():
+        trimmed_removals = len(REMOVALS) - _max_removals_entries()
+        del REMOVALS[:trimmed_removals]
+
+    if len(DOCUMENTS) > _max_documents_entries():
+        trimmed_documents = len(DOCUMENTS) - _max_documents_entries()
+        del DOCUMENTS[:trimmed_documents]
+
+    if len(SUPPORT_CHATS) > _max_support_chats():
+        over = len(SUPPORT_CHATS) - _max_support_chats()
+        ordered = sorted(SUPPORT_CHATS.items(), key=lambda kv: str(kv[1].get("created_at", "")))
+        for chat_id, _ in ordered[:over]:
+            SUPPORT_CHATS.pop(chat_id, None)
+            SUPPORT_MESSAGES.pop(chat_id, None)
+            _delete_support_chat(chat_id)
+            removed_chats += 1
+
+    for chat_id, bucket in list(SUPPORT_MESSAGES.items()):
+        if len(bucket) > _max_support_messages_per_chat():
+            over = len(bucket) - _max_support_messages_per_chat()
+            del bucket[:over]
+            trimmed_messages += over
+
+    return {
+        "removed_challenges": removed_challenges,
+        "removed_sessions": removed_sessions,
+        "trimmed_audit": trimmed_audit,
+        "trimmed_email": trimmed_email,
+        "trimmed_payments": trimmed_payments,
+        "trimmed_removals": trimmed_removals,
+        "trimmed_documents": trimmed_documents,
+        "removed_chats": removed_chats,
+        "trimmed_messages": trimmed_messages,
+    }
 
 def _fetch_users() -> List[Dict[str, Any]]:
     """Fetch users from client_index service."""
@@ -527,18 +1015,229 @@ async def get_startup_sequence(token: dict = Depends(verify_admin_or_service)):
 # Background tasks (would be implemented in a real system)
 async def health_check_service(service_name: str):
     """Periodically check the health of a registered service"""
-    # This would make HTTP requests to the service's health endpoint
-    # and update the service status accordingly
-    pass
+    svc = SERVICE_REGISTRY.get(service_name)
+    if not svc:
+        return None
+
+    host = svc.get("host")
+    port = svc.get("port")
+    if not host or not port:
+        svc["status"] = "unknown"
+        svc["last_health_check"] = now_iso()
+        return svc
+
+    url = f"http://{host}:{port}/health"
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            svc["status"] = "healthy" if 200 <= resp.status < 300 else "degraded"
+    except urllib.error.HTTPError as e:
+        svc["status"] = "unhealthy"
+        svc["last_error"] = f"HTTP {e.code}"
+    except Exception as e:
+        svc["status"] = "unhealthy"
+        svc["last_error"] = str(e)
+
+    svc["last_health_check"] = now_iso()
+    return svc
 
 async def check_startup_sequence():
     """Check if services can be started in the correct sequence"""
-    # This would implement the logic to start services in dependency order
-    # based on health checks and readiness
-    pass
+    sequence_status = []
+    previous_ok = True
+    for name in SERVICE_STARTUP_ORDER:
+        svc = SERVICE_REGISTRY.get(name)
+        status = (svc or {}).get("status", "not_registered")
+        ready = previous_ok and status in {"healthy", "running", "ready"}
+        sequence_status.append({
+            "service_name": name,
+            "status": status,
+            "ready_for_next": ready,
+        })
+        previous_ok = previous_ok and ready
+
+    return {
+        "startup_order": SERVICE_STARTUP_ORDER,
+        "sequence_status": sequence_status,
+        "all_services_ready": all(row["ready_for_next"] for row in sequence_status) if sequence_status else False,
+    }
 
 
 # ==================== SUPPORT API ====================
+@support_router.post("/anon/start")
+async def support_anon_start(payload: SupportAnonStartIn, request: Request):
+    run_support_state_cleanup()
+    email = payload.email.lower()
+    ip = request.client.host if request.client else "anon"
+
+    allowed, retry = _ratelimit(f"support-anon-start-ip:{ip}", max_attempts=8, window_seconds=15 * 60)
+    if not allowed:
+        raise HTTPException(status_code=429, detail=f"Too many support OTP requests from this IP. Retry in {retry}s")
+
+    allowed, retry = _ratelimit(f"support-anon-start-email:{email}", max_attempts=4, window_seconds=60 * 60)
+    if not allowed:
+        raise HTTPException(status_code=429, detail=f"Too many OTP requests for this email. Retry in {retry}s")
+
+    otp = _support_generate_otp()
+    challenge_id = generate_id()
+    otp_ttl_minutes = _support_anon_otp_ttl_minutes()
+    otp_max_attempts = _support_anon_otp_max_attempts()
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=otp_ttl_minutes)
+    SUPPORT_ANON_CHALLENGES[challenge_id] = {
+        "id": challenge_id,
+        "email": email,
+        "purpose": "support_anon",
+        "otp_hash": _support_otp_digest(email, "support_anon", otp),
+        "expires_at": expires_at.isoformat(),
+        "attempts": 0,
+        "max_attempts": otp_max_attempts,
+        "created_ip": ip,
+        "verified": False,
+        "created_at": now_iso(),
+    }
+
+    body = (
+        f"Your d31337m3 support verification code is: {otp}\n\n"
+        f"This code expires in {otp_ttl_minutes} minutes.\n"
+        "If you did not request this, you can ignore this email."
+    )
+    if not _send_email_sync(email, "[d31337m3] Support chat verification code", body):
+        raise HTTPException(status_code=500, detail="Failed to send verification code")
+
+    AUDIT_LOG.append({
+        "id": generate_id(),
+        "at": now_iso(),
+        "actor_email": email,
+        "action": "support_anon_otp_sent",
+        "target_email": email,
+    })
+    return {
+        "ok": True,
+        "challenge_id": challenge_id,
+        "email_hint": _mask_email(email),
+        "expires_in_seconds": otp_ttl_minutes * 60,
+    }
+
+
+@support_router.post("/anon/resend")
+async def support_anon_resend(payload: SupportAnonResendIn, request: Request):
+    run_support_state_cleanup()
+    email = payload.email.lower()
+    challenge = SUPPORT_ANON_CHALLENGES.get(payload.challenge_id)
+    if not challenge or challenge.get("email") != email:
+        raise HTTPException(status_code=404, detail="Challenge not found")
+    if challenge.get("verified"):
+        raise HTTPException(status_code=400, detail="Challenge already verified")
+
+    return await support_anon_start(SupportAnonStartIn(email=email), request)
+
+
+@support_router.post("/anon/verify")
+async def support_anon_verify(payload: SupportAnonVerifyIn, request: Request):
+    run_support_state_cleanup()
+    email = payload.email.lower()
+    ip = request.client.host if request.client else "anon"
+    challenge = SUPPORT_ANON_CHALLENGES.get(payload.challenge_id)
+    if not challenge or challenge.get("email") != email:
+        raise HTTPException(status_code=404, detail="Challenge not found")
+
+    if datetime.fromisoformat(challenge["expires_at"]) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="OTP expired")
+    if challenge.get("attempts", 0) >= challenge.get("max_attempts", _support_anon_otp_max_attempts()):
+        raise HTTPException(status_code=429, detail="OTP attempt limit reached")
+
+    allowed, retry = _ratelimit(f"support-anon-verify-ip:{ip}", max_attempts=20, window_seconds=15 * 60)
+    if not allowed:
+        raise HTTPException(status_code=429, detail=f"Too many verification attempts. Retry in {retry}s")
+
+    incoming = _support_otp_digest(email, "support_anon", payload.otp)
+    if not hmac.compare_digest(incoming, challenge.get("otp_hash", "")):
+        challenge["attempts"] = challenge.get("attempts", 0) + 1
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+
+    challenge["verified"] = True
+    chat = _create_anon_chat(email)
+    session_token = generate_id()
+    session_expires = datetime.now(timezone.utc) + timedelta(hours=_support_anon_session_hours())
+    SUPPORT_ANON_SESSIONS[session_token] = {
+        "session_token": session_token,
+        "chat_id": chat["id"],
+        "email": email,
+        "ip": ip,
+        "expires_at": session_expires.isoformat(),
+        "created_at": now_iso(),
+    }
+
+    AUDIT_LOG.append({
+        "id": generate_id(),
+        "at": now_iso(),
+        "actor_email": email,
+        "action": "support_anon_verified",
+        "target_chat_id": chat["id"],
+    })
+    return {
+        "ok": True,
+        "session_token": session_token,
+        "session_expires_at": session_expires.isoformat(),
+        "chat": chat,
+        "messages": SUPPORT_MESSAGES.get(chat["id"], []),
+    }
+
+
+@support_router.get("/anon/chats/{chat_id}/messages")
+async def support_anon_messages(chat_id: str, session_token: str, request: Request):
+    run_support_state_cleanup()
+    _require_anon_session(session_token, chat_id, request)
+    if chat_id not in SUPPORT_CHATS:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    return {"chat": SUPPORT_CHATS[chat_id], "messages": SUPPORT_MESSAGES.get(chat_id, [])}
+
+
+@support_router.post("/anon/chats/{chat_id}/messages")
+async def support_anon_send_message(chat_id: str, payload: SupportAnonMessageIn, request: Request):
+    run_support_state_cleanup()
+    session = _require_anon_session(payload.session_token, chat_id, request)
+    if chat_id not in SUPPORT_CHATS:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    if len(text) > 2000:
+        raise HTTPException(status_code=400, detail="Message too long")
+
+    allowed, retry = _ratelimit(f"support-anon-msg:{payload.session_token}", max_attempts=20, window_seconds=5 * 60)
+    if not allowed:
+        raise HTTPException(status_code=429, detail=f"Too many messages. Retry in {retry}s")
+
+    msg = {
+        "id": generate_id(),
+        "chat_id": chat_id,
+        "sender_role": "customer",
+        "sender_id": None,
+        "sender_email": session.get("email"),
+        "text": text,
+        "sent_at": now_iso(),
+        "source": "anonymous",
+    }
+    SUPPORT_MESSAGES.setdefault(chat_id, []).append(msg)
+    SUPPORT_CHATS[chat_id]["updated_at"] = now_iso()
+    SUPPORT_CHATS[chat_id]["last_message_at"] = msg["sent_at"]
+    if SUPPORT_CHATS[chat_id].get("status") == "closed":
+        SUPPORT_CHATS[chat_id]["status"] = "active"
+    _persist_support_message(msg)
+    _persist_support_chat(SUPPORT_CHATS[chat_id])
+
+    AUDIT_LOG.append({
+        "id": generate_id(),
+        "at": now_iso(),
+        "actor_email": session.get("email"),
+        "action": "support_anon_message",
+        "target_chat_id": chat_id,
+    })
+    return {"ok": True, "message": msg}
+
+
 @support_router.get("/chats/me")
 async def support_my_chat(token: dict = Depends(verify_authenticated_user)):
     user_id = token.get("sub")
@@ -571,6 +1270,7 @@ async def support_start_chat(token: dict = Depends(verify_authenticated_user)):
     }
     SUPPORT_CHATS[chat_id] = chat
     SUPPORT_MESSAGES[chat_id] = []
+    _persist_support_chat(chat)
     AUDIT_LOG.append({
         "id": generate_id(),
         "at": now_iso(),
@@ -611,6 +1311,8 @@ async def support_send_message(chat_id: str, payload: dict, token: dict = Depend
     chat["last_message_at"] = msg["sent_at"]
     if chat.get("status") == "closed":
         chat["status"] = "active"
+    _persist_support_message(msg)
+    _persist_support_chat(chat)
 
     AUDIT_LOG.append({
         "id": generate_id(),
@@ -658,9 +1360,11 @@ async def support_create_ticket(payload: dict, token: dict = Depends(verify_auth
         "created_by": "customer",
     }
     SUPPORT_TICKETS[ticket_id] = ticket
+    _persist_support_ticket(ticket)
 
     if chat_id and chat_id in SUPPORT_CHATS:
         SUPPORT_CHATS[chat_id]["updated_at"] = now_iso()
+        _persist_support_chat(SUPPORT_CHATS[chat_id])
 
     AUDIT_LOG.append({
         "id": generate_id(),
@@ -720,6 +1424,8 @@ async def support_admin_send_message(chat_id: str, payload: dict, token: dict = 
     SUPPORT_CHATS[chat_id]["last_message_at"] = msg["sent_at"]
     if SUPPORT_CHATS[chat_id].get("status") == "closed":
         SUPPORT_CHATS[chat_id]["status"] = "active"
+    _persist_support_message(msg)
+    _persist_support_chat(SUPPORT_CHATS[chat_id])
 
     AUDIT_LOG.append({
         "id": generate_id(),
@@ -748,6 +1454,7 @@ async def support_admin_patch_ticket(ticket_id: str, payload: dict, token: dict 
             ticket[key] = payload.get(key)
     ticket["updated_at"] = now_iso()
     ticket["updated_by"] = token.get("sub") or token.get("iss")
+    _persist_support_ticket(ticket)
 
     AUDIT_LOG.append({
         "id": generate_id(),
@@ -782,6 +1489,7 @@ async def support_admin_create_ticket_from_chat(chat_id: str, payload: dict, tok
         "created_by": "admin",
     }
     SUPPORT_TICKETS[ticket_id] = ticket
+    _persist_support_ticket(ticket)
 
     AUDIT_LOG.append({
         "id": generate_id(),
@@ -1230,7 +1938,7 @@ async def admin_smtp_test(payload: dict, token: dict = Depends(verify_admin_or_s
     msg.set_content(body)
 
     try:
-        # SMTP provider currently has cert/hostname mismatch; match backend behavior.
+        # SMTP provider currently has cert/hostname mismatch; use tolerant TLS context.
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE

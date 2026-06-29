@@ -6,7 +6,7 @@ This document summarizes security controls and privacy protections aligned with 
 
 - Public ingress: Nginx
 - Frontend: React app on `127.0.0.1:3000`
-- Backend API ingress: orchestrator on `127.0.0.1:8006`
+- API ingress: orchestrator on `127.0.0.1:8006`
 - Internal microservices:
   - `client_index` (`8002`)
   - `payments` (`8003`)
