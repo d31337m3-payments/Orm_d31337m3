@@ -79,12 +79,248 @@ SUPPORTED_COUNTRIES = {
 }
 
 # Data brokers list (shared across services)
-DATA_BROKERS = [
-    "Spokeo", "BeenVerified", "WhitePages", "Intelius", "MyLife",
-    "Radaris", "PeopleFinder", "TruthFinder", "FastPeopleSearch",
-    "PublicRecords", "Acxiom", "Equifax-PrivacyData", "PeekYou",
-    "InstantCheckmate", "USSearch",
+BROKER_DIRECTORY = [
+    {
+        "name": "Acxiom",
+        "region": "USA/Global",
+        "privacy_email": "privacy@acxiom.com",
+        "privacy_phone": "1-877-774-2099",
+        "address": "301 E. Dave Ward Dr., Conway, AR 72032",
+        "opt_out_url": "https://www.acxiom.com/opt-out/",
+        "aliases": [],
+    },
+    {
+        "name": "Experian",
+        "region": "USA/Global",
+        "privacy_email": "optout@experian.com",
+        "privacy_phone": "1-888-397-3742",
+        "address": "475 Anton Blvd, Costa Mesa, CA 92626",
+        "opt_out_url": "https://www.experian.com/privacy/opt-out-target-advertising",
+        "aliases": [],
+    },
+    {
+        "name": "LexisNexis",
+        "region": "USA/Global",
+        "privacy_email": "privacy.policy@lexisnexis.com",
+        "privacy_phone": "1-800-833-9848",
+        "address": "9443 Springboro Pike, Miamisburg, OH 45342",
+        "opt_out_url": "https://optout.lexisnexis.com/",
+        "aliases": [],
+    },
+    {
+        "name": "Whitepages",
+        "region": "USA",
+        "privacy_email": "privacy@whitepages.com",
+        "privacy_phone": "1-800-952-8800",
+        "address": "2033 6th Ave #1600, Seattle, WA 98121",
+        "opt_out_url": "https://www.whitepages.com/name/{first_name}-{last_name}",
+        "aliases": ["WhitePages"],
+    },
+    {
+        "name": "Spokeo",
+        "region": "USA",
+        "privacy_email": "privacy@spokeo.com",
+        "privacy_phone": "1-888-271-3321",
+        "address": "556 S. Fair Oaks Ave, Pasadena, CA 91105",
+        "opt_out_url": "https://www.spokeo.com/{first_name}-{last_name}",
+        "aliases": [],
+    },
+    {
+        "name": "BeenVerified",
+        "region": "USA",
+        "privacy_email": "privacy@beenverified.com",
+        "privacy_phone": "1-866-885-6480",
+        "address": "19 Union Sq W, New York, NY 10003",
+        "opt_out_url": "https://www.beenverified.com/f/optout/search",
+        "aliases": [],
+    },
+    {
+        "name": "Radaris",
+        "region": "USA",
+        "privacy_email": "privacy@radaris.com",
+        "privacy_phone": "1-855-723-2747",
+        "address": "P.O. Box 425510, Cambridge, MA 02142",
+        "opt_out_url": "https://radaris.com/p/{first_name}/{last_name}",
+        "aliases": [],
+    },
+    {
+        "name": "PeopleFinders",
+        "region": "USA",
+        "privacy_email": "privacy@peoplefinders.com",
+        "privacy_phone": "1-800-718-8997",
+        "address": "1821 Q St, Sacramento, CA 95811",
+        "opt_out_url": "https://www.peoplefinders.com/find/person/{first_name}-{last_name}",
+        "aliases": ["PeopleFinder"],
+    },
+    {
+        "name": "Intelius",
+        "region": "USA",
+        "privacy_email": "privacy@intelius.com",
+        "privacy_phone": "1-888-245-1655",
+        "address": "10900 NE 4th St, Bellevue, WA 98004",
+        "opt_out_url": "https://www.intelius.com/people-search/{first_name}-{last_name}",
+        "aliases": [],
+    },
+    {
+        "name": "LocateFamily",
+        "region": "USA/Canada/Global",
+        "privacy_email": "privacy@locatefamily.com",
+        "privacy_phone": "N/A",
+        "address": "Online Registry Only",
+        "opt_out_url": "https://www.locatefamily.com/Street-Lists/index.html",
+        "aliases": [],
+    },
+    {
+        "name": "MyLife",
+        "region": "USA",
+        "privacy_email": None,
+        "privacy_phone": None,
+        "address": None,
+        "opt_out_url": None,
+        "aliases": [],
+    },
+    {
+        "name": "TruthFinder",
+        "region": "USA",
+        "privacy_email": None,
+        "privacy_phone": None,
+        "address": None,
+        "opt_out_url": None,
+        "aliases": [],
+    },
+    {
+        "name": "FastPeopleSearch",
+        "region": "USA",
+        "privacy_email": None,
+        "privacy_phone": None,
+        "address": None,
+        "opt_out_url": None,
+        "aliases": [],
+    },
+    {
+        "name": "PublicRecords",
+        "region": "USA",
+        "privacy_email": None,
+        "privacy_phone": None,
+        "address": None,
+        "opt_out_url": None,
+        "aliases": [],
+    },
+    {
+        "name": "Equifax",
+        "region": "USA/Global",
+        "privacy_email": None,
+        "privacy_phone": None,
+        "address": None,
+        "opt_out_url": None,
+        "aliases": ["Equifax-PrivacyData"],
+    },
+    {
+        "name": "PeekYou",
+        "region": "USA",
+        "privacy_email": None,
+        "privacy_phone": None,
+        "address": None,
+        "opt_out_url": None,
+        "aliases": [],
+    },
+    {
+        "name": "InstantCheckmate",
+        "region": "USA",
+        "privacy_email": None,
+        "privacy_phone": None,
+        "address": None,
+        "opt_out_url": None,
+        "aliases": [],
+    },
+    {
+        "name": "USSearch",
+        "region": "USA",
+        "privacy_email": None,
+        "privacy_phone": None,
+        "address": None,
+        "opt_out_url": None,
+        "aliases": [],
+    },
 ]
+
+DATA_BROKERS = [entry["name"] for entry in BROKER_DIRECTORY]
+
+DATA_BROKER_LOOKUP = {entry["name"]: entry for entry in BROKER_DIRECTORY}
+
+for _broker_entry in BROKER_DIRECTORY:
+    for _alias in _broker_entry.get("aliases", []):
+        DATA_BROKER_LOOKUP[_alias] = _broker_entry
+
+SEARCH_ENGINE_DIRECTORY = [
+    {
+        "name": "Google",
+        "classification": "Popular",
+        "privacy_email": "data-protection-office@google.com",
+        "privacy_phone": "1-650-253-0000",
+        "address": "1600 Amphitheatre Pkwy, Mountain View, CA 94043",
+        "search_url": "https://www.google.com/search?q={query}",
+    },
+    {
+        "name": "Bing",
+        "classification": "Popular",
+        "privacy_email": "msnhlp@microsoft.com",
+        "privacy_phone": "1-800-642-7676",
+        "address": "One Microsoft Way, Redmond, WA 98052",
+        "search_url": "https://www.bing.com/search?q={query}",
+    },
+    {
+        "name": "Yahoo Search",
+        "classification": "Popular",
+        "privacy_email": "privacypolicy@yahooinc.com",
+        "privacy_phone": "1-800-318-0612",
+        "address": "701 First Avenue, Sunnyvale, CA 94089",
+        "search_url": "https://search.yahoo.com/search?p={query}",
+    },
+    {
+        "name": "DuckDuckGo",
+        "classification": "Popular",
+        "privacy_email": "privacy@duckduckgo.com",
+        "privacy_phone": "N/A",
+        "address": "20 Paoli Pike, Paoli, PA 19301",
+        "search_url": "https://duckduckgo.com/?q={query}",
+    },
+    {
+        "name": "Mojeek",
+        "classification": "Not Popular",
+        "privacy_email": "privacy@mojeek.com",
+        "privacy_phone": "+44 1273 006020",
+        "address": "18 North Street, Brighton, BN1 1EB, UK",
+        "search_url": "https://www.mojeek.com/search?q={query}",
+    },
+    {
+        "name": "Gigablast",
+        "classification": "Not Popular",
+        "privacy_email": "privacy@gigablast.com",
+        "privacy_phone": "N/A",
+        "address": "New Mexico, USA",
+        "search_url": "https://www.gigablast.com/search?q={query}",
+    },
+    {
+        "name": "Exalead",
+        "classification": "Not Popular",
+        "privacy_email": "privacy@3ds.com",
+        "privacy_phone": "+33 1 61 62 61 62",
+        "address": "10 Rue Marcel Dassault, Vélizy-Villacoublay, France",
+        "search_url": "https://www.exalead.com/search/web/results/?q={query}",
+    },
+    {
+        "name": "Swisscows",
+        "classification": "Not Popular",
+        "privacy_email": "info@swisscows.com",
+        "privacy_phone": "+41 71 454 70 10",
+        "address": "Haldenstrasse 5, 9200 Gossau, Switzerland",
+        "search_url": "https://swisscows.com/web?query={query}",
+    },
+]
+
+SEARCH_ENGINES = [entry["name"] for entry in SEARCH_ENGINE_DIRECTORY]
+SEARCH_ENGINE_LOOKUP = {entry["name"]: entry for entry in SEARCH_ENGINE_DIRECTORY}
 
 # Plans and payment config shared across services.
 PLANS = {
