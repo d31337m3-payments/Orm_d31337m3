@@ -33,41 +33,78 @@ profile_router = APIRouter()
 # Security schemes
 bearer = HTTPBearer(auto_error=False)
 
+# Simple in-memory rate limit tracker (in production, use Redis or similar)
+RATE_LIMIT_CACHE = {}
+
+def _ratelimit(key: str, max_attempts: int = 5, window_seconds: int = 300) -> tuple:
+    """
+    Simple rate limiter. Returns (allowed: bool, retry_after: int)
+    """
+    import time
+    current_time = time.time()
+    
+    if key not in RATE_LIMIT_CACHE:
+        RATE_LIMIT_CACHE[key] = []
+    
+    # Remove old attempts outside the window
+    RATE_LIMIT_CACHE[key] = [t for t in RATE_LIMIT_CACHE[key] if current_time - t < window_seconds]
+    
+    if len(RATE_LIMIT_CACHE[key]) >= max_attempts:
+        # Calculate retry time
+        oldest_attempt = RATE_LIMIT_CACHE[key][0]
+        retry_after = int(window_seconds - (current_time - oldest_attempt))
+        return (False, max(1, retry_after))
+    
+    # Record this attempt
+    RATE_LIMIT_CACHE[key].append(current_time)
+    return (True, 0)
+
+# Simple in-memory database storage (persists for the lifetime of the process)
+_USERS_DB = {}
+_PROFILES_DB = {}
+
 # Mock database functions (in a real implementation, these would connect to actual databases)
 async def get_user_by_email(email: str):
     """Mock function to get user by email"""
-    # This would be replaced with actual database query
+    email_lower = email.lower()
+    for user_id, user in _USERS_DB.items():
+        if user.get("email") == email_lower:
+            return user
     return None
 
 async def get_user_by_id(user_id: str):
     """Mock function to get user by ID"""
-    # This would be replaced with actual database query
-    return None
+    return _USERS_DB.get(user_id)
 
 async def create_user(user_data: dict):
     """Mock function to create a user"""
-    # This would be replaced with actual database insert
+    user_id = user_data.get("id")
+    _USERS_DB[user_id] = user_data
     return user_data
 
 async def update_user(user_id: str, update_data: dict):
     """Mock function to update a user"""
-    # This would be replaced with actual database update
-    return {**update_data, "id": user_id}
+    if user_id in _USERS_DB:
+        _USERS_DB[user_id].update(update_data)
+        return _USERS_DB[user_id]
+    return None
 
 async def get_profile_by_user_id(user_id: str):
     """Mock function to get profile by user ID"""
-    # This would be replaced with actual database query
-    return None
+    return _PROFILES_DB.get(user_id)
 
 async def create_profile(profile_data: dict):
     """Mock function to create a profile"""
-    # This would be replaced with actual database insert
+    user_id = profile_data.get("user_id")
+    _PROFILES_DB[user_id] = profile_data
     return profile_data
 
 async def update_profile(user_id: str, update_data: dict):
     """Mock function to update a profile"""
-    # This would be replaced with actual database update
-    return {**update_data, "user_id": user_id}
+    if user_id in _PROFILES_DB:
+        _PROFILES_DB[user_id].update(update_data)
+        return _PROFILES_DB[user_id]
+    return None
 
 # Authentication endpoints
 @auth_router.post("/register")
