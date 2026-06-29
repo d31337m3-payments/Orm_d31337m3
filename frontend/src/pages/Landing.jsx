@@ -322,6 +322,32 @@ export default function Landing() {
         </div>
       </nav>
 
+      {/* Launch announcement */}
+      <section className="border-b border-[#222] bg-black py-10 px-8" id="launch-announcement">
+        <div className="max-w-7xl mx-auto brutal-card p-8">
+          <div className="overline text-[#FF3333] mb-3">// launch announcement</div>
+          <h3 className="font-display font-black text-3xl tracking-tight mb-4">Production Launch Update</h3>
+          <p className="font-mono text-zinc-300 leading-relaxed">{LAUNCH_ANNOUNCEMENT_PREVIEW}</p>
+
+          {announcementExpanded && (
+            <div className="mt-4 space-y-4 font-mono text-zinc-400 leading-relaxed">
+              {LAUNCH_ANNOUNCEMENT_FULL.map((paragraph, i) => (
+                <p key={i}>{paragraph}</p>
+              ))}
+            </div>
+          )}
+
+          <button
+            type="button"
+            data-testid="launch-announcement-toggle"
+            className="mt-6 brutal-btn"
+            onClick={() => setAnnouncementExpanded((v) => !v)}
+          >
+            {announcementExpanded ? "Show Less" : "Read Full Announcement"}
+          </button>
+        </div>
+      </section>
+
       {/* Hero */}
       <motion.section style={{ y: heroY }} className="hero-grain px-8 pt-24 pb-20 border-b border-[#222] relative">
         <div className="max-w-7xl mx-auto grid grid-cols-12 gap-6">
@@ -533,32 +559,6 @@ export default function Landing() {
           <div className="font-mono text-xs text-zinc-500 text-right">
             Coverage: <span className="text-white">🇨🇦 Canada · 🇺🇸 United States · 🇲🇽 México</span>
           </div>
-        </div>
-      </section>
-
-      {/* Launch announcement */}
-      <section className="border-b border-[#222] bg-black py-12 px-8" id="launch-announcement">
-        <div className="max-w-7xl mx-auto brutal-card p-8">
-          <div className="overline text-[#FF3333] mb-3">// launch announcement</div>
-          <h3 className="font-display font-black text-3xl tracking-tight mb-4">Production Launch Update</h3>
-          <p className="font-mono text-zinc-300 leading-relaxed">{LAUNCH_ANNOUNCEMENT_PREVIEW}</p>
-
-          {announcementExpanded && (
-            <div className="mt-4 space-y-4 font-mono text-zinc-400 leading-relaxed">
-              {LAUNCH_ANNOUNCEMENT_FULL.map((paragraph, i) => (
-                <p key={i}>{paragraph}</p>
-              ))}
-            </div>
-          )}
-
-          <button
-            type="button"
-            data-testid="launch-announcement-toggle"
-            className="mt-6 brutal-btn"
-            onClick={() => setAnnouncementExpanded((v) => !v)}
-          >
-            {announcementExpanded ? "Show Less" : "Read Full Announcement"}
-          </button>
         </div>
       </section>
 
