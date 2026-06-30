@@ -12,6 +12,7 @@ import Billing from "@/pages/Billing";
 import Admin from "@/pages/Admin";
 import Documents from "@/pages/Documents";
 import Security from "@/pages/Security";
+import SecurityCenter from "@/pages/SecurityCenter";
 
 const Protected = ({ children, admin = false }) => {
   const { user, loading } = useAuth();
@@ -30,6 +31,7 @@ function App() {
             <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/security-center" element={<SecurityCenter />} />
             <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
             <Route path="/keywords" element={<Protected><Keywords /></Protected>} />
             <Route path="/findings" element={<Protected><Findings /></Protected>} />

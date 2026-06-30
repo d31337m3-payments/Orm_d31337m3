@@ -1,0 +1,10 @@
+Running microservices health gate...
+OK   auditor :8005
+OK   client_index :8002
+OK   data_handling :8004
+OK   payments :8003
+OK   watchdog :8007
+OK   orchestrator :8006
+Checking orchestrator API root...
+Checking local Nginx API routing...
+Gate passed.

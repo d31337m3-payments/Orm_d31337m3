@@ -199,13 +199,13 @@ const PUBLIC_SERVICE_HEALTH_DEFAULT = [
 ];
 
 const LAUNCH_ANNOUNCEMENT_PREVIEW =
-  "We are excited to announce a major platform release focused on reliability, security, and launch readiness.";
+  "D31337m3.com (pronounced delete me dot com) is shipping a security-first refactor focused on reliability, privacy controls, and trust.";
 
 const LAUNCH_ANNOUNCEMENT_FULL = [
-  "This launch ships a fully service-oriented API platform in production-ready form, with stronger resilience safeguards, improved security posture, and expanded operational visibility.",
-  "For customers, this means more stable authentication, billing, monitoring, and support flows, with no action required to continue using the platform.",
-  "Launch readiness controls are in place: health gates are passing, deployment and rollback runbooks are updated, and release/audit evidence has been documented for go-live review.",
-  "We will continue improving performance, observability, and support tooling in upcoming iterations while keeping reliability and security as top priorities.",
+  "D31337m3.com (pronounced delete me dot com) is in an active security-first refactor of our Privacy and Reputation Management platform.",
+  "Security measures in place include JWT-based authentication, service-to-service verification, Infisical-first secret handling with fallback controls, public telemetry redaction, and gated operational runbooks for deployment and rollback.",
+  "If you encounter bugs, broken flows, trust voidances, known exploit regressions, or suspected breaches, contact support@d31337m3.com or security@d31337m3.com. Reports to security@d31337m3.com are filtered and forwarded to admins/security team members.",
+  "Thank you for your patience while we complete this refactored vision. We are also proposing a bounty program with a dedicated $1000 reward reserve plus a free 6-month Pro subscription for validated, authentic reports submitted with proof and responsible disclosure.",
 ];
 
 function sampleHeroText() {
@@ -337,6 +337,7 @@ export default function Landing() {
         <div className="flex items-center gap-6 font-mono text-sm">
           <a href="#features" className="text-zinc-400 hover:text-white">Features</a>
           <a href="#pricing" className="text-zinc-400 hover:text-white">Pricing</a>
+          <Link to="/security-center" className="text-zinc-400 hover:text-white">Security</Link>
           {isLaunchLive ? (
             <>
               <Link to="/login" data-testid="nav-login" className="text-zinc-400 hover:text-white">Login</Link>
@@ -360,6 +361,11 @@ export default function Landing() {
               {LAUNCH_ANNOUNCEMENT_FULL.map((paragraph, i) => (
                 <p key={i}>{paragraph}</p>
               ))}
+              <div className="pt-2 flex flex-wrap gap-3">
+                <Link to="/security-center" className="brutal-btn brutal-btn-primary">Open Security Center</Link>
+                <a href="mailto:support@d31337m3.com" className="brutal-btn">Contact Support</a>
+                <a href="mailto:security@d31337m3.com" className="brutal-btn">Report Security Issue</a>
+              </div>
             </div>
           )}
 
