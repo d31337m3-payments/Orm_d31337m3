@@ -3,7 +3,6 @@ Example showing how to use the Data Handling Service
 Demonstrates data scraping, scan execution, and findings management
 """
 
-import os
 import sys
 import httpx
 import asyncio
@@ -15,9 +14,7 @@ sys.path.append('/home/D31337m3/Orm_d31337m3/microservices/data_handling/service
 from shared.jwt_utils import create_service_token, verify_service_token
 from shared.security_middleware import verify_service_request
 
-# Service-specific secrets (should come from environment variables in production)
-DATA_HANDLING_JWT_SECRET = os.environ.get("DATA_HANDLING_JWT_SECRET", "change-me-in-production")
-CLIENT_INDEX_JWT_SECRET = os.environ.get("CLIENT_INDEX_JWT_SECRET", "change-me-in-production")
+
 
 async def example_scanning():
     """Example of how to trigger a scan through the data handling service"""

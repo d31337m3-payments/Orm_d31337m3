@@ -3,28 +3,26 @@ Database Layer for Microservices
 Handles SQLAlchemy ORM configuration and session management
 """
 
-import os
 import logging
-from sqlalchemy import create_engine, Column, String, Integer, DateTime, Boolean, Text, ForeignKey
+from sqlalchemy import create_engine, Column, String, Integer, DateTime, Boolean, Text, Float, ForeignKey, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker, Session, relationship
 from datetime import datetime, timezone
 import json
+from secrets_manager import init_infisical, get_secret, get_bool_secret
 
 logger = logging.getLogger(__name__)
 
 # Database URL configuration
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "sqlite:////tmp/d31337m3.db"  # Default to SQLite for development
-)
+init_infisical()
+DATABASE_URL = get_secret("DATABASE_URL", "sqlite:////tmp/d31337m3.db")
 
 # Create engine with connection pooling
 engine = create_engine(
     DATABASE_URL,
     connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {},
     pool_pre_ping=True,
-    echo=os.environ.get("SQL_DEBUG", "false").lower() == "true"
+    echo=get_bool_secret("SQL_DEBUG", False)
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -55,6 +53,7 @@ class User(Base):
     auth_provider = Column(String(50), default="password")
     is_admin = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
+    employee_number = Column(String(50), unique=True, nullable=True, index=True)
     plan_id = Column(String(36), nullable=True)
     subscription_status = Column(String(50), default="trial")
     subscription_started_at = Column(DateTime, nullable=True)
@@ -71,6 +70,7 @@ class User(Base):
             "name": self.name,
             "is_admin": self.is_admin,
             "is_active": self.is_active,
+            "employee_number": self.employee_number,
             "plan_id": self.plan_id,
             "subscription_status": self.subscription_status,
             "subscription_started_at": self.subscription_started_at.isoformat() if self.subscription_started_at else None,
@@ -321,10 +321,193 @@ class AuthAudit(Base):
         }
 
 
+class EmployeeProfile(Base):
+    """Extended employee profile linked to a User."""
+    __tablename__ = "employee_profiles"
+
+    id = Column(String(36), primary_key=True, index=True)
+    user_id = Column(String(36), ForeignKey("users.id"), unique=True, index=True, nullable=False)
+    department = Column(String(100), nullable=True)
+    role = Column(String(100), nullable=True)
+    hire_date = Column(DateTime, nullable=True)
+    pay_rate = Column(Float, nullable=True)
+    pay_currency = Column(String(3), default="USD")
+    is_offboarded = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "department": self.department,
+            "role": self.role,
+            "hire_date": self.hire_date.isoformat() if self.hire_date else None,
+            "pay_rate": self.pay_rate,
+            "pay_currency": self.pay_currency,
+            "is_offboarded": self.is_offboarded,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class WorkforceShift(Base):
+    """Shift schedule entries."""
+    __tablename__ = "workforce_shifts"
+
+    id = Column(String(36), primary_key=True, index=True)
+    employee_id = Column(String(36), ForeignKey("employee_profiles.id"), index=True, nullable=False)
+    start_at = Column(DateTime, nullable=False)
+    end_at = Column(DateTime, nullable=False)
+    role = Column(String(100), nullable=True)
+    location = Column(String(200), nullable=True)
+    status = Column(String(30), default="scheduled")
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "employee_id": self.employee_id,
+            "start_at": self.start_at.isoformat() if self.start_at else None,
+            "end_at": self.end_at.isoformat() if self.end_at else None,
+            "role": self.role,
+            "location": self.location,
+            "status": self.status,
+            "notes": self.notes,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class WorkforceTimesheet(Base):
+    """Timesheet entries for payroll."""
+    __tablename__ = "workforce_timesheets"
+
+    id = Column(String(36), primary_key=True, index=True)
+    employee_id = Column(String(36), ForeignKey("employee_profiles.id"), index=True, nullable=False)
+    date = Column(DateTime, nullable=False)
+    hours = Column(Float, nullable=False)
+    overtime_hours = Column(Float, default=0)
+    approved = Column(Boolean, default=False)
+    approved_by = Column(String(36), nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "employee_id": self.employee_id,
+            "date": self.date.isoformat() if self.date else None,
+            "hours": self.hours,
+            "overtime_hours": self.overtime_hours,
+            "approved": self.approved,
+            "approved_by": self.approved_by,
+            "notes": self.notes,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class WorkforcePayrollRun(Base):
+    """Payroll run records."""
+    __tablename__ = "workforce_payroll_runs"
+
+    id = Column(String(36), primary_key=True, index=True)
+    period_start = Column(DateTime, nullable=False)
+    period_end = Column(DateTime, nullable=False)
+    status = Column(String(30), default="draft")
+    total_amount = Column(Float, default=0)
+    line_items_json = Column(Text, nullable=True)
+    approved_by = Column(String(36), nullable=True)
+    processed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    def to_dict(self):
+        line_items = None
+        if self.line_items_json:
+            try:
+                line_items = json.loads(self.line_items_json)
+            except Exception:
+                line_items = None
+        return {
+            "id": self.id,
+            "period_start": self.period_start.isoformat() if self.period_start else None,
+            "period_end": self.period_end.isoformat() if self.period_end else None,
+            "status": self.status,
+            "total_amount": self.total_amount,
+            "line_items": line_items,
+            "approved_by": self.approved_by,
+            "processed_at": self.processed_at.isoformat() if self.processed_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class ShiftComment(Base):
+    """Comments on shifts (employee-to-employee)."""
+    __tablename__ = "shift_comments"
+
+    id = Column(String(36), primary_key=True, index=True)
+    shift_id = Column(String(36), ForeignKey("workforce_shifts.id"), index=True, nullable=False)
+    author_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    text = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "shift_id": self.shift_id,
+            "author_id": self.author_id,
+            "text": self.text,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class PayrollTimeLog(Base):
+    """Auto-logged chat/queue time for payroll precision tracking."""
+    __tablename__ = "payroll_time_logs"
+
+    id = Column(String(36), primary_key=True, index=True)
+    employee_id = Column(String(36), ForeignKey("employee_profiles.id"), index=True, nullable=False)
+    activity_type = Column(String(50), nullable=False)
+    started_at = Column(DateTime, nullable=False)
+    ended_at = Column(DateTime, nullable=True)
+    duration_minutes = Column(Float, default=0)
+    source = Column(String(50), default="chat_queue")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "employee_id": self.employee_id,
+            "activity_type": self.activity_type,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "ended_at": self.ended_at.isoformat() if self.ended_at else None,
+            "duration_minutes": self.duration_minutes,
+            "source": self.source,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 def init_db():
     """Initialize database tables"""
     Base.metadata.create_all(bind=engine)
+    _run_migrations()
     logger.info("Database tables initialized successfully")
+
+
+def _run_migrations():
+    """Apply column additions that create_all won't do on existing tables."""
+    try:
+        with engine.connect() as conn:
+            conn.execute("ALTER TABLE users ADD COLUMN employee_number VARCHAR(50)")
+            conn.commit()
+    except Exception:
+        pass  # column already exists
 
 
 def drop_all_tables():

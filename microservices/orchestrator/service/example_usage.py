@@ -3,7 +3,6 @@ Example showing how to use the Orchestrator Service
 Demonstrates service registration, discovery, and lifecycle management
 """
 
-import os
 import sys
 import httpx
 import asyncio
@@ -14,10 +13,6 @@ sys.path.append('/home/D31337m3/Orm_d31337m3/microservices/orchestrator/service'
 
 from shared.jwt_utils import create_service_token, verify_service_token
 from shared.security_middleware import verify_service_request
-
-# Service-specific secrets (should come from environment variables in production)
-ORCHESTRATOR_JWT_SECRET = os.environ.get("ORCHESTRATOR_JWT_SECRET", "change-me-in-production")
-CLIENT_INDEX_JWT_SECRET = os.environ.get("CLIENT_INDEX_JWT_SECRET", "change-me-in-production")
 
 async def example_service_registration():
     """Example of how a service would register with the orchestrator"""

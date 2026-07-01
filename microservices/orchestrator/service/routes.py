@@ -27,11 +27,17 @@ from datetime import datetime, timedelta, timezone
 import sys
 sys.path.append('/home/D31337m3/Orm_d31337m3/microservices/shared')
 
-from shared.jwt_utils import create_service_token, verify_service_token, verify_user_token, create_user_token
+from shared.jwt_utils import (
+    create_service_token,
+    verify_service_token,
+    verify_user_token,
+    create_user_token,
+    user_has_admin_access,
+)
 from shared.security_middleware import verify_service_request, require_service_auth, verify_user_request
 from shared.database_models import generate_id, now_iso
 from shared.utils import SUPPORTED_COUNTRIES, DATA_BROKERS, BROKER_DIRECTORY, PLANS, RATE_LIMITS, RATE_WINDOW_SEC, RATE_MAX_ATTEMPTS
-from shared.secrets_manager import get_secret
+from shared.secrets_manager import get_secret, get_infisical_status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 # Import local models (would be defined in a models.py file)
@@ -47,6 +53,7 @@ health_router = APIRouter()
 admin_router = APIRouter()
 support_router = APIRouter()
 workforce_router = APIRouter()
+public_router = APIRouter()
 
 # Security schemes
 bearing = HTTPBearer(auto_error=False)
@@ -136,7 +143,7 @@ def _max_support_messages_per_chat() -> int:
 
 
 def _support_db_path() -> str:
-    return get_secret("ORCHESTRATOR_SUPPORT_DB_PATH", os.environ.get("ORCHESTRATOR_SUPPORT_DB_PATH", "/tmp/d31337m3_orchestrator_support.db")) or "/tmp/d31337m3_orchestrator_support.db"
+    return get_secret("ORCHESTRATOR_SUPPORT_DB_PATH", "/tmp/d31337m3_orchestrator_support.db") or "/tmp/d31337m3_orchestrator_support.db"
 
 
 class SupportAnonStartIn(BaseModel):
@@ -354,9 +361,41 @@ async def verify_admin_or_service(
     # Admin user token path
     try:
         payload = verify_user_token(token)
-        if not payload.get("is_admin"):
+        if not user_has_admin_access(payload.get("email"), bool(payload.get("is_admin"))):
             raise HTTPException(status_code=403, detail="Admin only")
         payload["auth_type"] = "user_admin"
+        return payload
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+async def verify_employee_or_admin(
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearing)
+) -> dict:
+    """Allow service token, admin user, OR employee user (has employee_number)."""
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    token = credentials.credentials
+
+    # Service token path
+    try:
+        payload = verify_service_token(token, None)
+        payload["auth_type"] = "service"
+        return payload
+    except Exception:
+        pass
+
+    # User token path (admin OR employee)
+    try:
+        payload = verify_user_token(token)
+        is_admin = user_has_admin_access(payload.get("email"), bool(payload.get("is_admin")))
+        has_employee_number = bool(payload.get("employee_number"))
+        if not is_admin and not has_employee_number:
+            raise HTTPException(status_code=403, detail="Admin or employee access required")
+        payload["auth_type"] = "user_admin" if is_admin else "user_employee"
         return payload
     except HTTPException:
         raise
@@ -381,7 +420,7 @@ async def verify_authenticated_user(
 
 
 def _is_admin(payload: dict) -> bool:
-    return bool(payload.get("is_admin"))
+    return user_has_admin_access(payload.get("email"), bool(payload.get("is_admin")))
 
 
 def _chat_owner(chat: Dict[str, Any]) -> Optional[str]:
@@ -436,9 +475,13 @@ def _ratelimit(key: str, max_attempts: int, window_seconds: int) -> tuple[bool, 
 
 
 def _send_email_sync(to: str, subject: str, body: str) -> bool:
-    smtp_enabled = _env_bool("SMTP_ENABLED", False)
-    if not smtp_enabled:
-        logger.info(f"[EMAIL-MOCK] to={to} subject={subject}")
+    smtp_host = _secret("SMTP_HOST")
+    smtp_port = int(_secret("SMTP_PORT", "465") or "465")
+    smtp_username = _secret("SMTP_USERNAME")
+    smtp_password = _secret("SMTP_PASSWORD")
+    smtp_from = _secret("SMTP_FROM") or smtp_username
+    if not smtp_host or not smtp_username or not smtp_password or not smtp_from:
+        logger.info(f"[EMAIL-MOCK] to={to} subject={subject} (SMTP not fully configured)")
         EMAIL_LOG.append({
             "id": generate_id(),
             "to": to,
@@ -449,15 +492,6 @@ def _send_email_sync(to: str, subject: str, body: str) -> bool:
             "sent_at": now_iso(),
         })
         return True
-
-    smtp_host = _secret("SMTP_HOST")
-    smtp_port = int(_secret("SMTP_PORT", "465") or "465")
-    smtp_username = _secret("SMTP_USERNAME")
-    smtp_password = _secret("SMTP_PASSWORD")
-    smtp_from = _secret("SMTP_FROM") or smtp_username
-    if not smtp_host or not smtp_username or not smtp_password or not smtp_from:
-        logger.error("SMTP enabled but config is incomplete")
-        return False
 
     msg = EmailMessage()
     msg["From"] = smtp_from
@@ -728,7 +762,7 @@ def get_next_service_to_start() -> Optional[str]:
 
 
 def _secret(key: str, default: Optional[str] = None) -> Optional[str]:
-    """Read from Infisical cache first, then environment fallback."""
+    """Read from Infisical cache only."""
     return get_secret(key, default)
 
 
@@ -761,25 +795,34 @@ def _run_cmd(cmd: List[str], timeout: int = 30) -> Dict[str, Any]:
         return {"ok": False, "code": -1, "stdout": "", "stderr": str(e), "command": " ".join(cmd)}
 
 
-def _probe_service_status(service_name: str) -> tuple[str, Optional[str]]:
-    """Return current status and last check timestamp for known services."""
+def _probe_service_status(service_name: str) -> dict:
+    """Probe a service's /health endpoint and return status + metadata."""
     if service_name == "orchestrator":
-        # Avoid self-HTTP probe from inside orchestrator request handling.
-        return "healthy", now_iso()
+        return {
+            "status": "healthy",
+            "version": "1.0.5",
+            "started_at": now_iso(),
+            "last_health_check": now_iso(),
+        }
 
     port = SERVICE_PORTS.get(service_name)
     if port is None:
-        return "not_registered", None
+        return {"status": "not_registered", "version": None, "started_at": None, "last_health_check": None}
 
     url = f"http://127.0.0.1:{port}/health"
     try:
         req = urllib.request.Request(url, method="GET")
         with urllib.request.urlopen(req, timeout=2) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-            status = str(data.get("status", "healthy")).lower()
-            return ("healthy" if status in ["healthy", "ok"] else "unhealthy"), now_iso()
+            raw = str(data.get("status", "healthy")).lower()
+            return {
+                "status": "healthy" if raw in ["healthy", "ok"] else "unhealthy",
+                "version": str(data.get("version", "") or ""),
+                "started_at": str(data.get("started_at", "") or ""),
+                "last_health_check": now_iso(),
+            }
     except Exception:
-        return "unhealthy", now_iso()
+        return {"status": "unhealthy", "version": None, "started_at": None, "last_health_check": now_iso()}
 
 
 def _ensure_service_entry(service_name: str) -> Dict[str, Any]:
@@ -790,13 +833,16 @@ def _ensure_service_entry(service_name: str) -> Dict[str, Any]:
 
     port = SERVICE_PORTS.get(service_name)
     host = "127.0.0.1"
-    status, checked_at = _probe_service_status(service_name)
+    probe = _probe_service_status(service_name)
     rec = {
         "service_name": service_name,
         "host": host,
         "port": port,
-        "status": status,
-        "last_health_check": checked_at,
+        "status": probe["status"],
+        "version": probe.get("version") or "",
+        "last_version": "",
+        "started_at": probe.get("started_at") or "",
+        "last_health_check": probe["last_health_check"],
         "health_endpoint": "/health",
         "metadata": {},
         "registered_at": now_iso(),
@@ -810,9 +856,15 @@ def _refresh_registry_snapshot() -> None:
     """Refresh in-memory registry using live local health probes."""
     for service_name in SERVICE_STARTUP_ORDER:
         rec = _ensure_service_entry(service_name)
-        status, checked_at = _probe_service_status(service_name)
-        rec["status"] = status
-        rec["last_health_check"] = checked_at
+        probe = _probe_service_status(service_name)
+        new_version = probe.get("version") or ""
+        if new_version and new_version != rec.get("version"):
+            rec["last_version"] = rec.get("version", "")
+            rec["version"] = new_version
+        rec["status"] = probe["status"]
+        if probe.get("started_at"):
+            rec["started_at"] = probe["started_at"]
+        rec["last_health_check"] = probe["last_health_check"]
         rec["updated_at"] = now_iso()
 
 # Service registration and discovery endpoints
@@ -1002,6 +1054,9 @@ async def get_startup_sequence(token: dict = Depends(verify_admin_or_service)):
             sequence_status.append({
                 "service_name": service_name,
                 "status": service_info["status"],
+                "version": service_info.get("version", ""),
+                "last_version": service_info.get("last_version", ""),
+                "started_at": service_info.get("started_at", ""),
                 "host": service_info["host"],
                 "port": service_info["port"],
                 "last_health_check": service_info["last_health_check"]
@@ -1010,6 +1065,9 @@ async def get_startup_sequence(token: dict = Depends(verify_admin_or_service)):
             sequence_status.append({
                 "service_name": service_name,
                 "status": "not_registered",
+                "version": None,
+                "last_version": None,
+                "started_at": None,
                 "host": None,
                 "port": None,
                 "last_health_check": None
@@ -1024,6 +1082,52 @@ async def get_startup_sequence(token: dict = Depends(verify_admin_or_service)):
             if s.get("service_name") in SERVICE_STARTUP_ORDER
         )
     }
+
+# Public health summary (no auth required — used by the landing page)
+@public_router.get("/health-summary")
+async def public_health_summary():
+    """Get a lightweight health summary for all services (public, no auth)."""
+    _refresh_registry_snapshot()
+    services = []
+    for service_name in SERVICE_STARTUP_ORDER:
+        if service_name in SERVICE_REGISTRY:
+            info = SERVICE_REGISTRY[service_name]
+            services.append({
+                "service": service_name,
+                "status": info["status"],
+                "version": info.get("version", ""),
+                "started_at": info.get("started_at", ""),
+            })
+        else:
+            services.append({
+                "service": service_name,
+                "status": "unknown",
+                "version": None,
+                "started_at": None,
+            })
+    return {
+        "services": services,
+        "infisical": get_infisical_status(),
+        "timestamp": now_iso(),
+    }
+
+# Public changelog endpoint (no auth — serves changes.md for the public security portal)
+@public_router.get("/changelogs")
+async def public_changelogs():
+    """Aggregate all microservice changes.md files for public auditing."""
+    import os as _os
+    base = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    services_dir = _os.path.dirname(base)
+    logs = {}
+    for entry in sorted(_os.listdir(services_dir)):
+        changes_path = _os.path.join(services_dir, entry, "changes.md")
+        if _os.path.isfile(changes_path):
+            try:
+                with open(changes_path) as f:
+                    logs[entry] = f.read()
+            except Exception as e:
+                logs[entry] = f"Error reading changelog: {e}"
+    return {"changelogs": logs, "timestamp": now_iso()}
 
 # Background tasks (would be implemented in a real system)
 async def health_check_service(service_name: str):
@@ -1391,7 +1495,7 @@ async def support_create_ticket(payload: dict, token: dict = Depends(verify_auth
 
 
 @support_router.get("/admin/chats")
-async def support_admin_chats(token: dict = Depends(verify_admin_or_service)):
+async def support_admin_chats(token: dict = Depends(verify_employee_or_admin)):
     rows = sorted(SUPPORT_CHATS.values(), key=lambda c: c.get("updated_at", ""), reverse=True)
     shaped = []
     for c in rows:
@@ -1404,7 +1508,7 @@ async def support_admin_chats(token: dict = Depends(verify_admin_or_service)):
 
 
 @support_router.get("/admin/chats/{chat_id}/messages")
-async def support_admin_chat_messages(chat_id: str, token: dict = Depends(verify_admin_or_service)):
+async def support_admin_chat_messages(chat_id: str, token: dict = Depends(verify_employee_or_admin)):
     if chat_id not in SUPPORT_CHATS:
         raise HTTPException(status_code=404, detail="Chat not found")
     return {
@@ -1414,7 +1518,7 @@ async def support_admin_chat_messages(chat_id: str, token: dict = Depends(verify
 
 
 @support_router.post("/admin/chats/{chat_id}/messages")
-async def support_admin_send_message(chat_id: str, payload: dict, token: dict = Depends(verify_admin_or_service)):
+async def support_admin_send_message(chat_id: str, payload: dict, token: dict = Depends(verify_employee_or_admin)):
     if chat_id not in SUPPORT_CHATS:
         raise HTTPException(status_code=404, detail="Chat not found")
     text = (payload.get("text") or "").strip()
@@ -1451,13 +1555,13 @@ async def support_admin_send_message(chat_id: str, payload: dict, token: dict = 
 
 
 @support_router.get("/admin/tickets")
-async def support_admin_tickets(token: dict = Depends(verify_admin_or_service)):
+async def support_admin_tickets(token: dict = Depends(verify_employee_or_admin)):
     rows = sorted(SUPPORT_TICKETS.values(), key=lambda t: t.get("updated_at", ""), reverse=True)
     return {"tickets": rows, "count": len(rows)}
 
 
 @support_router.patch("/admin/tickets/{ticket_id}")
-async def support_admin_patch_ticket(ticket_id: str, payload: dict, token: dict = Depends(verify_admin_or_service)):
+async def support_admin_patch_ticket(ticket_id: str, payload: dict, token: dict = Depends(verify_employee_or_admin)):
     ticket = SUPPORT_TICKETS.get(ticket_id)
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
@@ -1480,7 +1584,7 @@ async def support_admin_patch_ticket(ticket_id: str, payload: dict, token: dict 
 
 
 @support_router.post("/admin/tickets/from-chat/{chat_id}")
-async def support_admin_create_ticket_from_chat(chat_id: str, payload: dict, token: dict = Depends(verify_admin_or_service)):
+async def support_admin_create_ticket_from_chat(chat_id: str, payload: dict, token: dict = Depends(verify_employee_or_admin)):
     chat = SUPPORT_CHATS.get(chat_id)
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
@@ -1517,13 +1621,13 @@ async def support_admin_create_ticket_from_chat(chat_id: str, payload: dict, tok
 
 # ==================== WORKFORCE OPS API ====================
 @workforce_router.get("/admin/shifts")
-async def workforce_admin_shifts(token: dict = Depends(verify_admin_or_service)):
+async def workforce_admin_shifts(token: dict = Depends(verify_employee_or_admin)):
     rows = sorted(WORKFORCE_SHIFTS.values(), key=lambda s: s.get("start_at", ""))
     return {"shifts": rows, "count": len(rows)}
 
 
 @workforce_router.post("/admin/shifts")
-async def workforce_admin_create_shift(payload: dict, token: dict = Depends(verify_admin_or_service)):
+async def workforce_admin_create_shift(payload: dict, token: dict = Depends(verify_employee_or_admin)):
     employee_id = (payload.get("employee_id") or "").strip()
     start_at = payload.get("start_at")
     end_at = payload.get("end_at")
@@ -1554,7 +1658,7 @@ async def workforce_admin_create_shift(payload: dict, token: dict = Depends(veri
 
 
 @workforce_router.patch("/admin/shifts/{shift_id}")
-async def workforce_admin_patch_shift(shift_id: str, payload: dict, token: dict = Depends(verify_admin_or_service)):
+async def workforce_admin_patch_shift(shift_id: str, payload: dict, token: dict = Depends(verify_employee_or_admin)):
     rec = WORKFORCE_SHIFTS.get(shift_id)
     if not rec:
         raise HTTPException(status_code=404, detail="Shift not found")
@@ -1573,13 +1677,13 @@ async def workforce_admin_patch_shift(shift_id: str, payload: dict, token: dict 
 
 
 @workforce_router.get("/admin/timesheets")
-async def workforce_admin_timesheets(token: dict = Depends(verify_admin_or_service)):
+async def workforce_admin_timesheets(token: dict = Depends(verify_employee_or_admin)):
     rows = sorted(WORKFORCE_TIMESHEETS.values(), key=lambda t: t.get("date", ""), reverse=True)
     return {"timesheets": rows, "count": len(rows)}
 
 
 @workforce_router.post("/admin/timesheets")
-async def workforce_admin_create_timesheet(payload: dict, token: dict = Depends(verify_admin_or_service)):
+async def workforce_admin_create_timesheet(payload: dict, token: dict = Depends(verify_employee_or_admin)):
     employee_id = (payload.get("employee_id") or "").strip()
     date = payload.get("date")
     hours = payload.get("hours")
@@ -1609,7 +1713,7 @@ async def workforce_admin_create_timesheet(payload: dict, token: dict = Depends(
 
 
 @workforce_router.patch("/admin/timesheets/{timesheet_id}")
-async def workforce_admin_patch_timesheet(timesheet_id: str, payload: dict, token: dict = Depends(verify_admin_or_service)):
+async def workforce_admin_patch_timesheet(timesheet_id: str, payload: dict, token: dict = Depends(verify_employee_or_admin)):
     rec = WORKFORCE_TIMESHEETS.get(timesheet_id)
     if not rec:
         raise HTTPException(status_code=404, detail="Timesheet not found")
@@ -1628,13 +1732,13 @@ async def workforce_admin_patch_timesheet(timesheet_id: str, payload: dict, toke
 
 
 @workforce_router.get("/admin/payroll-runs")
-async def workforce_admin_payroll_runs(token: dict = Depends(verify_admin_or_service)):
+async def workforce_admin_payroll_runs(token: dict = Depends(verify_employee_or_admin)):
     rows = sorted(WORKFORCE_PAYROLL_RUNS.values(), key=lambda p: p.get("created_at", ""), reverse=True)
     return {"payroll_runs": rows, "count": len(rows)}
 
 
 @workforce_router.post("/admin/payroll-runs")
-async def workforce_admin_create_payroll_run(payload: dict, token: dict = Depends(verify_admin_or_service)):
+async def workforce_admin_create_payroll_run(payload: dict, token: dict = Depends(verify_employee_or_admin)):
     period_start = payload.get("period_start")
     period_end = payload.get("period_end")
     if not period_start or not period_end:
@@ -1663,7 +1767,7 @@ async def workforce_admin_create_payroll_run(payload: dict, token: dict = Depend
 
 
 @workforce_router.patch("/admin/payroll-runs/{run_id}")
-async def workforce_admin_patch_payroll_run(run_id: str, payload: dict, token: dict = Depends(verify_admin_or_service)):
+async def workforce_admin_patch_payroll_run(run_id: str, payload: dict, token: dict = Depends(verify_employee_or_admin)):
     rec = WORKFORCE_PAYROLL_RUNS.get(run_id)
     if not rec:
         raise HTTPException(status_code=404, detail="Payroll run not found")
@@ -1771,7 +1875,13 @@ async def admin_impersonate(user_id: str, token: dict = Depends(verify_admin_or_
     user = _find_user(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    imp_token = create_user_token(user_id, bool(user.get("is_admin")), "client_index")
+    imp_token = create_user_token(
+        user_id,
+        bool(user.get("is_admin")),
+        "client_index",
+        email=user.get("email"),
+        employee_number=user.get("employee_number"),
+    )
     AUDIT_LOG.append({
         "id": generate_id(),
         "at": now_iso(),
@@ -1880,15 +1990,26 @@ async def admin_analytics(token: dict = Depends(verify_admin_or_service)):
 @admin_router.get("/health")
 async def admin_health(token: dict = Depends(verify_admin_or_service)):
     _refresh_registry_snapshot()
+    inf_status = get_infisical_status()
+    inf_check = {
+        "name": "Infisical",
+        "status": "ok" if inf_status["connected"] else ("warn" if inf_status["initialized"] else "fail"),
+        "detail": (
+            f"connected, {inf_status['cached_secrets']} secrets cached"
+            if inf_status["connected"]
+            else (f"not connected, last error: {inf_status['error']}" if inf_status["error"] else "not initialized")
+        ),
+    }
     checks = [
         {
             "name": "Service Registry",
             "status": "ok" if len(SERVICE_REGISTRY) >= len(SERVICE_STARTUP_ORDER) else "warn",
             "detail": f"registered services: {len(SERVICE_REGISTRY)}",
         },
+        inf_check,
         {
             "name": "SMTP",
-            "status": "ok" if _env_bool("SMTP_ENABLED", False) else "warn",
+            "status": "ok" if _secret("SMTP_HOST") and _secret("SMTP_USERNAME") else "warn",
             "detail": f"host={_secret('SMTP_HOST', '') or 'not set'}",
         },
         {
@@ -1914,19 +2035,6 @@ async def admin_smtp_test(payload: dict, token: dict = Depends(verify_admin_or_s
         f"triggered_by={(token.get('sub') or token.get('iss') or 'unknown')}\n"
     )
 
-    smtp_enabled = _env_bool("SMTP_ENABLED", False)
-    if not smtp_enabled:
-        EMAIL_LOG.append({
-            "id": generate_id(),
-            "to": to,
-            "subject": subject,
-            "body": body,
-            "mocked": True,
-            "delivered": True,
-            "sent_at": now_iso(),
-        })
-        return {"ok": True, "to": to, "mocked": True}
-
     smtp_host = _secret("SMTP_HOST")
     smtp_port = int(_secret("SMTP_PORT", "465") or "465")
     smtp_username = _secret("SMTP_USERNAME")
@@ -1942,7 +2050,17 @@ async def admin_smtp_test(payload: dict, token: dict = Depends(verify_admin_or_s
         }.items() if not v
     ]
     if missing:
-        raise HTTPException(status_code=500, detail=f"SMTP enabled but missing config: {', '.join(missing)}")
+        logger.info(f"[EMAIL-MOCK] to={to} subject={subject} (SMTP not fully configured)")
+        EMAIL_LOG.append({
+            "id": generate_id(),
+            "to": to,
+            "subject": subject,
+            "body": body,
+            "mocked": True,
+            "delivered": True,
+            "sent_at": now_iso(),
+        })
+        return {"ok": True, "to": to, "mocked": True}
 
     msg = EmailMessage()
     msg["From"] = smtp_from
@@ -2019,7 +2137,7 @@ async def admin_settings(token: dict = Depends(verify_admin_or_service)):
             "cors_origins": _secret("CORS_ORIGINS"),
             "jwt_algorithm": _secret("JWT_ALGORITHM", "HS256"),
             "token_expiry_minutes": int(_secret("ACCESS_TOKEN_EXPIRE_MINUTES", "1440") or "1440"),
-            "smtp_enabled": _env_bool("SMTP_ENABLED", False),
+            "smtp_enabled": bool(_secret("SMTP_HOST") and _secret("SMTP_USERNAME")),
             "smtp_host": _secret("SMTP_HOST"),
             "smtp_port": _secret("SMTP_PORT"),
             "smtp_username": _secret("SMTP_USERNAME"),

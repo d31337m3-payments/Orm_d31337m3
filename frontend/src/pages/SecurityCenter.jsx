@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ShieldAlert, Bug, Lock, Mail } from "lucide-react";
+import { ShieldAlert, Bug, Lock, Mail, FileText } from "lucide-react";
+import api from "@/lib/api";
 
 function buildSecurityMailto(form) {
   const subject = encodeURIComponent(`[Security Report] ${form.reportType} - ${form.summary || "No summary"}`);
@@ -41,6 +42,14 @@ export default function SecurityCenter() {
     accepted: false,
   });
   const [sent, setSent] = useState(false);
+  const [changelogs, setChangelogs] = useState(null);
+  const [activeService, setActiveService] = useState(null);
+
+  useEffect(() => {
+    api.get("/api/public/changelogs")
+      .then((res) => setChangelogs(res.data.changelogs))
+      .catch(() => {});
+  }, []);
 
   const canSubmit = useMemo(() => {
     return Boolean(
@@ -210,6 +219,59 @@ export default function SecurityCenter() {
               </div>
             )}
           </form>
+        </section>
+
+        <section className="brutal-card p-8 mt-6">
+          <div className="overline mb-2">// changelogs</div>
+          <h2 className="font-display font-black text-2xl mb-2">Microservice Changelog Audit</h2>
+          <p className="font-mono text-xs text-zinc-400 mb-6">
+            Public changelog for all microservices powering the d31337m3 platform.
+            Select a service to view its version history.
+          </p>
+
+          <div className="flex flex-wrap gap-2 mb-6">
+            {changelogs && Object.keys(changelogs).sort().map((svc) => (
+              <button
+                key={svc}
+                onClick={() => setActiveService(activeService === svc ? null : svc)}
+                className={`font-mono text-xs px-3 py-1.5 border transition-colors ${
+                  activeService === svc
+                    ? "border-[#00FF41] text-[#00FF41] bg-[#00FF41]/10"
+                    : "border-zinc-700 text-zinc-400 hover:border-zinc-500"
+                }`}
+              >
+                {svc}
+              </button>
+            ))}
+            {!changelogs && (
+              <span className="font-mono text-xs text-zinc-600">loading...</span>
+            )}
+          </div>
+
+          {activeService && changelogs && (() => {
+            const lines = changelogs[activeService].split("\n");
+            return (
+              <div className="font-mono text-xs text-zinc-300 bg-black/50 p-4 rounded max-h-[600px] overflow-y-auto whitespace-pre-wrap">
+                {lines.map((line, i) => {
+                  const isHeading = line.startsWith("# ");
+                  const isVersion = /^##\s/.test(line);
+                  const isBullet = line.startsWith("- ") || line.startsWith("  -");
+                  return (
+                    <div
+                      key={i}
+                      className={`${
+                        isHeading ? "text-white font-bold text-sm mt-2 mb-1" : ""
+                      }${isVersion ? "text-[#00FF41] font-bold text-xs mt-3 mb-1" : ""}${
+                        isBullet ? "text-zinc-400 pl-4" : ""
+                      }${!isHeading && !isVersion && !isBullet ? "text-zinc-500" : ""}`}
+                    >
+                      {line || "\u00A0"}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </section>
       </div>
     </div>

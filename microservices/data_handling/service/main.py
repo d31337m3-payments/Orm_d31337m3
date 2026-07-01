@@ -3,7 +3,6 @@ Data Handling Service - Main Application Entry Point
 Handles data scraping, enrichment, scan execution, and findings management
 """
 
-import os
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,7 +15,7 @@ from shared.jwt_utils import create_service_token, verify_service_token, create_
 from shared.security_middleware import verify_service_request, verify_user_request, require_service_auth, require_user_auth
 from shared.database_models import *
 from shared.utils import now_iso, hash_password, verify_password, SUPPORTED_COUNTRIES, DATA_BROKERS, PLANS
-from shared.secrets_manager import init_infisical
+from shared.secrets_manager import init_infisical, get_cors_allowed_origins
 
 # Initialize Infisical before importing routes to ensure module-level config can read loaded secrets.
 init_infisical()
@@ -28,17 +27,14 @@ from .routes import scan_router, findings_router, keywords_router, broker_router
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger("data_handling")
 
-CORS_ALLOWED_ORIGINS = [
-    o.strip()
-    for o in os.environ.get("CORS_ORIGINS", "https://d31337m3.com,https://www.d31337m3.com,http://localhost:3000,http://127.0.0.1:3000").split(",")
-    if o.strip()
-]
+CORS_ALLOWED_ORIGINS = get_cors_allowed_origins()
+STARTED_AT = now_iso()
 
 # Create FastAPI app
 app = FastAPI(
     title="Data Handling Service",
     description="Data scraping, enrichment, scan execution, and findings management service",
-    version="1.0.0"
+    version="1.0.3"
 )
 
 # Add CORS middleware
@@ -59,7 +55,13 @@ app.include_router(broker_router, prefix="/api/brokers", tags=["brokers"])
 # Health check endpoint
 @app.get("/health")
 async def health_check():
-    return {"service": "data_handling", "status": "healthy", "timestamp": now_iso()}
+    return {
+        "service": "data_handling",
+        "status": "healthy",
+        "version": app.version,
+        "started_at": STARTED_AT,
+        "timestamp": now_iso()
+    }
 
 # Root endpoint
 @app.get("/")

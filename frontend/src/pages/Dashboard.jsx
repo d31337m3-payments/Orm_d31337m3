@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
-import BrandMark from "@/components/BrandMark";
+
 import api from "@/lib/api";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
@@ -118,13 +118,6 @@ export default function Dashboard() {
   return (
     <DashboardLayout title={`Welcome back, ${user?.name || user?.email}`}>
       <div className="mb-6 flex items-center justify-between brutal-card p-4 brand-panel">
-        <div className="flex items-center gap-3">
-          <BrandMark size={30} showWordmark />
-          <div className="font-mono text-xs text-zinc-400">
-            <div className="uppercase tracking-[0.35em]">production branding</div>
-            <div className="text-zinc-500">Purple mark, dark shell, public-safe operational UI.</div>
-          </div>
-        </div>
         <div className="flex items-center gap-3">
           <BrokerSubmissionDialog
             triggerLabel="Submit Broker"

@@ -7,7 +7,6 @@ Contains payment processing, subscription management, and webhook endpoints
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request, status
 from typing import Optional, List, Dict, Literal
-import os
 import logging
 import json
 import sqlite3
@@ -27,7 +26,7 @@ from shared.jwt_utils import create_service_token, verify_service_token, create_
 from shared.security_middleware import verify_service_request, verify_user_request, require_service_auth, require_user_auth
 from shared.database_models import *
 from shared.utils import now_iso, hash_password, verify_password, SUPPORTED_COUNTRIES, PLANS, CRYPTO_WALLET, PAYMENTS_EMAIL, verify_usdc_tx
-from shared.secrets_manager import get_secret
+from shared.secrets_manager import get_secret, get_int_secret, get_bool_secret
 
 # Import local models (would be defined in a models.py file)
 # For now, we'll define them inline or import from shared
@@ -44,31 +43,31 @@ _db_lock = threading.Lock()
 PAYMENT_STORE: Dict[str, dict] = {}
 USER_PAYMENTS: Dict[str, List[str]] = {}
 USER_SUBSCRIPTIONS: Dict[str, dict] = {}
-MAX_PAYMENTS_IN_MEMORY = int(os.environ.get("PAYMENTS_MAX_RECORDS", "100000"))
+MAX_PAYMENTS_IN_MEMORY = get_int_secret("PAYMENTS_MAX_RECORDS", 100000)
 
 
 def _payments_db_path() -> str:
-    return get_secret("PAYMENTS_DB_PATH", os.environ.get("PAYMENTS_DB_PATH", "/tmp/d31337m3_payments.db")) or "/tmp/d31337m3_payments.db"
+    return get_secret("PAYMENTS_DB_PATH", "/tmp/d31337m3_payments.db") or "/tmp/d31337m3_payments.db"
 
 
 def _admin_email() -> str:
-    return get_secret("ADMIN_EMAIL", os.environ.get("ADMIN_EMAIL", "admin@example.com")) or "admin@example.com"
+    return get_secret("ADMIN_EMAIL", "admin@example.com") or "admin@example.com"
 
 
 def _allow_placeholder_crypto_verification() -> bool:
-    return (get_secret("ALLOW_PLACEHOLDER_CRYPTO_VERIFICATION", os.environ.get("ALLOW_PLACEHOLDER_CRYPTO_VERIFICATION", "false")) or "false").lower() == "true"
+    return get_bool_secret("ALLOW_PLACEHOLDER_CRYPTO_VERIFICATION", False)
 
 
 def _stripe_webhook_secret() -> str:
-    return get_secret("STRIPE_WEBHOOK_SECRET", os.environ.get("STRIPE_WEBHOOK_SECRET", "")) or ""
+    return get_secret("STRIPE_WEBHOOK_SECRET", "") or ""
 
 
 def _stripe_webhook_tolerance_seconds() -> int:
-    return int(get_secret("STRIPE_WEBHOOK_TOLERANCE_SECONDS", os.environ.get("STRIPE_WEBHOOK_TOLERANCE_SECONDS", "300")) or "300")
+    return get_int_secret("STRIPE_WEBHOOK_TOLERANCE_SECONDS", 300)
 
 
 def _stripe_secret_key() -> str:
-    return get_secret("STRIPE_SECRET_KEY", os.environ.get("STRIPE_SECRET_KEY", "")) or ""
+    return get_secret("STRIPE_SECRET_KEY", "") or ""
 
 
 def _db_conn() -> sqlite3.Connection:

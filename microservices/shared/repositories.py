@@ -327,7 +327,7 @@ class TrustedDeviceRepository:
 
     @staticmethod
     def get_active(db: Session, user_id: str, device_id: str) -> TrustedDevice:
-        now = datetime.now(timezone.utc)
+        now = datetime.utcnow()
         return (
             db.query(TrustedDevice)
             .filter(
@@ -354,7 +354,7 @@ class TrustedDeviceRepository:
             .filter(TrustedDevice.user_id == user_id, TrustedDevice.device_id == device_id)
             .first()
         )
-        now = datetime.now(timezone.utc)
+        now = datetime.utcnow()
         if rec:
             rec.trusted_until = trusted_until
             rec.last_seen_at = now
@@ -383,7 +383,7 @@ class TrustedDeviceRepository:
         )
         if not rec:
             return None
-        rec.last_seen_at = datetime.now(timezone.utc)
+        rec.last_seen_at = datetime.utcnow()
         db.commit()
         db.refresh(rec)
         return rec

@@ -6,6 +6,8 @@ checks=(
   "client_index:8002"
   "data_handling:8004"
   "payments:8003"
+  "support_hub:8008"
+  "workforce_ops:8009"
   "watchdog:8007"
   "orchestrator:8006"
 )

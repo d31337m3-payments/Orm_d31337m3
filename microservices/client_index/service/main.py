@@ -3,7 +3,6 @@ Client Index Service - Main Application Entry Point
 Handles user authentication, registration, and profile management
 """
 
-import os
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,13 +11,20 @@ from fastapi.middleware.cors import CORSMiddleware
 import sys
 sys.path.append('/home/D31337m3/Orm_d31337m3/microservices/shared')
 
-from shared.jwt_utils import create_service_token, verify_service_token, create_user_token, verify_user_token
+from shared.jwt_utils import (
+    create_service_token,
+    verify_service_token,
+    create_user_token,
+    verify_user_token,
+    SECRET_MANAGED_ADMIN_EMAIL,
+    user_has_admin_access,
+)
 from shared.security_middleware import verify_service_request, verify_user_request, require_service_auth, require_user_auth
 from shared.database_models import *
 from shared.database import SessionLocal
 from shared.repositories import UserRepository, UserSecurityRepository
 from shared.utils import now_iso, hash_password, verify_password, SUPPORTED_COUNTRIES, LEGAL_TEMPLATES, _fill_template
-from shared.secrets_manager import init_infisical, get_secret
+from shared.secrets_manager import init_infisical, get_secret, get_cors_allowed_origins
 
 # Initialize Infisical before importing routes to ensure module-level config can read loaded secrets.
 init_infisical()
@@ -30,17 +36,14 @@ from .routes import auth_router, user_router, profile_router
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger("client_index")
 
-CORS_ALLOWED_ORIGINS = [
-    o.strip()
-    for o in os.environ.get("CORS_ORIGINS", "https://d31337m3.com,https://www.d31337m3.com,http://localhost:3000,http://127.0.0.1:3000").split(",")
-    if o.strip()
-]
+CORS_ALLOWED_ORIGINS = get_cors_allowed_origins()
+STARTED_AT = now_iso()
 
 # Create FastAPI app
 app = FastAPI(
     title="Client Index Service",
     description="User authentication and profile management service",
-    version="1.0.0"
+    version="1.0.4"
 )
 
 # Add CORS middleware
@@ -60,7 +63,13 @@ app.include_router(profile_router, prefix="/api/profile", tags=["profile"])
 # Health check endpoint
 @app.get("/health")
 async def health_check():
-    return {"service": "client_index", "status": "healthy", "timestamp": now_iso()}
+    return {
+        "service": "client_index",
+        "status": "healthy",
+        "version": app.version,
+        "started_at": STARTED_AT,
+        "timestamp": now_iso()
+    }
 
 # Root endpoint
 @app.get("/")
@@ -83,14 +92,14 @@ async def startup_event():
     logger.info("Client Index Service starting up...")
     init_infisical()
 
-    # Bootstrap an admin account from secrets when it does not yet exist.
-    admin_email = (get_secret("ADMIN_EMAIL", os.environ.get("ADMIN_EMAIL", "")) or "").strip().lower()
-    admin_password = (get_secret("ADMIN_PASSWORD", os.environ.get("ADMIN_PASSWORD", "")) or "").strip()
-    if admin_email and admin_password:
+    # Bootstrap / sync admin account from Infisical secrets on every startup.
+    admin_email = (get_secret("ADMIN_EMAIL", "") or "").strip().lower()
+    admin_password = (get_secret("ADMIN_PASSWORD", "") or "").strip()
+    if admin_email:
         db = SessionLocal()
         try:
             existing = UserRepository.get_by_email(db, admin_email)
-            if not existing:
+            if not existing and admin_password:
                 UserRepository.create(
                     db,
                     {
@@ -106,9 +115,22 @@ async def startup_event():
                     },
                 )
                 logger.info("Bootstrapped admin user from secrets")
-            elif not existing.is_admin:
+            elif existing and not user_has_admin_access(existing.email, existing.is_admin):
                 UserRepository.update(db, existing.id, {"is_admin": True})
                 logger.info("Upgraded existing user to admin based on ADMIN_EMAIL")
+            elif not existing:
+                logger.warning("ADMIN_EMAIL is configured but ADMIN_PASSWORD is missing; cannot bootstrap admin account")
+
+            # On every startup, sync the admin password from Infisical.
+            if existing and admin_password:
+                UserRepository.update(db, existing.id, {"password_hash": hash_password(admin_password)})
+                logger.info("Synced admin password from Infisical on startup")
+
+            if admin_email != SECRET_MANAGED_ADMIN_EMAIL:
+                legacy_admin = UserRepository.get_by_email(db, SECRET_MANAGED_ADMIN_EMAIL)
+                if legacy_admin and legacy_admin.is_admin:
+                    UserRepository.update(db, legacy_admin.id, {"is_admin": False})
+                    logger.info("Revoked legacy admin portal access to match ADMIN_EMAIL secret")
         except Exception as e:
             logger.warning(f"Admin bootstrap warning: {e}")
         finally:

@@ -6,7 +6,6 @@ Contains authentication, user management, and profile endpoints
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional
-import os
 import logging
 from sqlalchemy.orm import Session
 import hashlib
@@ -21,7 +20,13 @@ from datetime import datetime, timedelta, timezone
 import sys
 sys.path.append('/home/D31337m3/Orm_d31337m3/microservices/shared')
 
-from shared.jwt_utils import create_service_token, verify_service_token, create_user_token, verify_user_token
+from shared.jwt_utils import (
+    create_service_token,
+    verify_service_token,
+    create_user_token,
+    verify_user_token,
+    user_has_admin_access,
+)
 from shared.security_middleware import verify_service_request, verify_user_request, require_service_auth, require_user_auth
 from shared.database_models import *
 from shared.database import get_db, init_db
@@ -35,7 +40,7 @@ from shared.repositories import (
     AuthAuditRepository,
 )
 from shared.utils import now_iso, hash_password, verify_password, find_promo_for_code, promo_is_expired, build_promo_code
-from shared.secrets_manager import get_secret
+from shared.secrets_manager import get_secret, get_int_secret
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -68,14 +73,14 @@ OTP_RESEND_MAX_PER_HOUR = int(get_secret("AUTH_OTP_RESEND_MAX_PER_HOUR", "5") or
 PROMO_CODES = [
     promo for promo in [
         build_promo_code(
-            get_secret("PROMO_CODE_PRIMARY", os.environ.get("PROMO_CODE_PRIMARY", "OCanada75")) or "OCanada75",
-            int(get_secret("PROMO_PERCENT_PRIMARY", os.environ.get("PROMO_PERCENT_PRIMARY", "75")) or "75"),
-            get_secret("PROMO_EXPIRES_PRIMARY", os.environ.get("PROMO_EXPIRES_PRIMARY", "2026-12-31")) or "2026-12-31",
+            get_secret("PROMO_CODE_PRIMARY", "OCanada75") or "OCanada75",
+            get_int_secret("PROMO_PERCENT_PRIMARY", 75),
+            get_secret("PROMO_EXPIRES_PRIMARY", "2026-12-31") or "2026-12-31",
         ),
         build_promo_code(
-            get_secret("PROMO_CODE_SECONDARY", os.environ.get("PROMO_CODE_SECONDARY", "")) or "",
-            int(get_secret("PROMO_PERCENT_SECONDARY", os.environ.get("PROMO_PERCENT_SECONDARY", "0")) or "0"),
-            get_secret("PROMO_EXPIRES_SECONDARY", os.environ.get("PROMO_EXPIRES_SECONDARY", "")) or "",
+            get_secret("PROMO_CODE_SECONDARY", "") or "",
+            get_int_secret("PROMO_PERCENT_SECONDARY", 0),
+            get_secret("PROMO_EXPIRES_SECONDARY", "") or "",
         ),
     ] if promo is not None
 ]
@@ -121,6 +126,15 @@ def _mask_email(email: str) -> str:
     return f"{local_masked}@{domain}"
 
 
+def _serialize_user(user, security=None) -> dict:
+    data = user.to_dict()
+    data["is_admin"] = user_has_admin_access(user.email, user.is_admin)
+    if security is not None:
+        data["email_verified"] = security.email_verified
+        data["two_fa_enabled"] = security.two_fa_enabled
+    return data
+
+
 def _otp_digest(email: str, purpose: str, otp: str) -> str:
     secret = get_secret("JWT_SECRET", "dev-secret") or "dev-secret"
     msg = f"{email.lower()}|{purpose}|{otp}".encode("utf-8")
@@ -139,17 +153,14 @@ def _get_device_id(request: Request) -> Optional[str]:
 
 
 def _send_email_sync(to: str, subject: str, body: str) -> bool:
-    smtp_enabled = str(get_secret("SMTP_ENABLED", os.environ.get("SMTP_ENABLED", "false"))).lower() == "true"
-    if not smtp_enabled:
-        logger.info(f"[EMAIL-MOCK] to={to} subject={subject}")
+    smtp_host = get_secret("SMTP_HOST")
+    smtp_port = get_int_secret("SMTP_PORT", 465)
+    smtp_username = get_secret("SMTP_USERNAME")
+    smtp_password = get_secret("SMTP_PASSWORD")
+    smtp_from = get_secret("SMTP_FROM") or smtp_username
+    if not smtp_host or not smtp_username or not smtp_password or not smtp_from:
+        logger.info(f"[EMAIL-MOCK] to={to} subject={subject} (SMTP not fully configured)")
         return True
-
-    smtp_host = get_secret("SMTP_HOST", os.environ.get("SMTP_HOST"))
-    smtp_port = int(get_secret("SMTP_PORT", os.environ.get("SMTP_PORT", "465")) or "465")
-    smtp_username = get_secret("SMTP_USERNAME", os.environ.get("SMTP_USERNAME"))
-    smtp_password = get_secret("SMTP_PASSWORD", os.environ.get("SMTP_PASSWORD"))
-    smtp_from = get_secret("SMTP_FROM", os.environ.get("SMTP_FROM")) or smtp_username
-    if not smtp_host or not smtp_username or not smtp_password:
         logger.error("SMTP enabled but config is incomplete")
         return False
 
@@ -168,8 +179,12 @@ def _send_email_sync(to: str, subject: str, body: str) -> bool:
     return True
 
 
+def _is_smtp_enabled() -> bool:
+    return bool(get_secret("SMTP_HOST") and get_secret("SMTP_USERNAME") and get_secret("SMTP_PASSWORD"))
+
+
 def _create_challenge(db: Session, *, email: str, purpose: str, otp: str, user_id: Optional[str] = None, metadata: Optional[dict] = None):
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=OTP_TTL_MINUTES)
+    expires_at = datetime.utcnow() + timedelta(minutes=OTP_TTL_MINUTES)
     return AuthChallengeRepository.create(db, {
         "email": email.lower(),
         "purpose": purpose,
@@ -224,7 +239,7 @@ def _require_valid_challenge(db: Session, payload: VerifyOtpIn, purpose: str):
         raise HTTPException(status_code=400, detail="Challenge mismatch")
     if challenge.consumed_at is not None:
         raise HTTPException(status_code=400, detail="Challenge already used")
-    if challenge.expires_at < datetime.now(timezone.utc):
+    if challenge.expires_at < datetime.utcnow():
         raise HTTPException(status_code=400, detail="OTP expired")
     if challenge.attempts >= challenge.max_attempts:
         raise HTTPException(status_code=429, detail="OTP attempt limit reached")
@@ -366,7 +381,7 @@ async def register_verify(payload: VerifyOtpIn, request: Request, db: Session = 
         "name": metadata.get("name") or payload.email.split("@")[0],
         "password_hash": metadata.get("password_hash"),
         "auth_provider": "password",
-        "is_admin": False,
+        "is_admin": user_has_admin_access(payload.email.lower(), False),
         "is_active": True,
         "plan_id": None,
         "subscription_status": "trial",
@@ -408,17 +423,11 @@ async def register_verify(payload: VerifyOtpIn, request: Request, db: Session = 
         detail={"challenge_id": challenge.id},
     )
 
-    token = create_user_token(created_user.id, False, "client_index")
-    response_user = {
-        "id": created_user.id,
-        "email": created_user.email,
-        "name": created_user.name,
-        "is_admin": False,
-        "plan_id": None,
-        "subscription_status": "trial",
-        "email_verified": True,
-        "two_fa_enabled": False,
-    }
+    token = create_user_token(created_user.id, created_user.is_admin, "client_index", email=created_user.email, employee_number=created_user.employee_number)
+    response_user = _serialize_user(
+        created_user,
+        type("SecurityState", (), {"email_verified": True, "two_fa_enabled": False})(),
+    )
     if promo:
         response_user["promo_code"] = promo.get("code")
         response_user["promo_discount_percent"] = promo.get("percent_off")
@@ -483,12 +492,27 @@ async def login(payload: UserLogin, request: Request, db: Session = Depends(get_
     needs_otp = bool((security and security.two_fa_enabled) or (not trusted_device))
 
     if needs_otp:
+        reason = "2fa_enabled" if (security and security.two_fa_enabled) else "unrecognized_device"
+        if reason == "unrecognized_device" and not _is_smtp_enabled():
+            _audit_auth_event(
+                db,
+                "login_otp_bypassed",
+                request,
+                user_id=user.id,
+                email=user.email,
+                detail={"reason": "smtp_unavailable"},
+            )
+            token = create_user_token(user.id, user.is_admin, "client_index", email=user.email, employee_number=user.employee_number)
+            return {
+                "token": token,
+                "user": _serialize_user(security=security, user=user)
+            }
+
         otp_allowed, otp_retry = _check_otp_send_limits(user.email, "login")
         if not otp_allowed:
             raise HTTPException(status_code=429, detail=f"Please wait {otp_retry}s before requesting another code")
 
         otp = _generate_otp()
-        reason = "2fa_enabled" if (security and security.two_fa_enabled) else "unrecognized_device"
         challenge = _create_challenge(
             db,
             email=user.email,
@@ -527,21 +551,12 @@ async def login(payload: UserLogin, request: Request, db: Session = Depends(get_
     _audit_auth_event(db, "login_success", request, user_id=user.id, email=user.email, detail={"trusted_device": bool(device_id)})
     
     # Create access token (JWT secret from Infisical)
-    token = create_user_token(user.id, user.is_admin, "client_index")
+    token = create_user_token(user.id, user.is_admin, "client_index", email=user.email, employee_number=user.employee_number)
     
     # Return response
     return {
         "token": token,
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "name": user.name,
-            "is_admin": user.is_admin,
-            "plan_id": user.plan_id,
-            "subscription_status": user.subscription_status,
-            "email_verified": security.email_verified if security else True,
-            "two_fa_enabled": security.two_fa_enabled if security else False,
-        }
+        "user": _serialize_user(security=security, user=user)
     }
 
 
@@ -556,25 +571,16 @@ async def login_verify(payload: LoginVerifyOtpIn, request: Request, db: Session 
     AuthChallengeRepository.mark_verified_and_consumed(db, challenge.id)
     device_id = _get_device_id(request)
     if payload.remember_device and device_id:
-        trusted_until = datetime.now(timezone.utc) + timedelta(days=TRUSTED_DEVICE_DAYS)
+        trusted_until = datetime.utcnow() + timedelta(days=TRUSTED_DEVICE_DAYS)
         TrustedDeviceRepository.upsert(db, user.id, device_id, trusted_until, payload.device_name)
         _audit_auth_event(db, "trusted_device_added", request, user_id=user.id, email=user.email, detail={"device_id": device_id})
 
     security = UserSecurityRepository.get_by_user_id(db, user.id)
-    token = create_user_token(user.id, user.is_admin, "client_index")
+    token = create_user_token(user.id, user.is_admin, "client_index", email=user.email, employee_number=user.employee_number)
     _audit_auth_event(db, "login_otp_verified", request, user_id=user.id, email=user.email, detail={"challenge_id": challenge.id})
     return {
         "token": token,
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "name": user.name,
-            "is_admin": user.is_admin,
-            "plan_id": user.plan_id,
-            "subscription_status": user.subscription_status,
-            "email_verified": security.email_verified if security else True,
-            "two_fa_enabled": security.two_fa_enabled if security else False,
-        }
+        "user": _serialize_user(security=security, user=user)
     }
 
 
@@ -684,7 +690,7 @@ async def revoke_device(trusted_device_id: str, request: Request, user: dict = D
 @auth_router.get("/audit/events")
 async def auth_audit_events(limit: int = 200, user: dict = Depends(verify_user_request), db: Session = Depends(get_db)):
     user_db = UserRepository.get_by_id(db, user.get("sub"))
-    if not user_db or not user_db.is_admin:
+    if not user_db or not user_has_admin_access(user_db.email, user_db.is_admin):
         raise HTTPException(status_code=403, detail="Admin only")
     from shared.database import AuthAudit
     rows = (
@@ -702,7 +708,7 @@ async def get_current_user_info(user: dict = Depends(verify_user_request), db: S
     user_db = UserRepository.get_by_id(db, user.get("sub"))
     if not user_db:
         raise HTTPException(status_code=404, detail="User not found")
-    return {"user": user_db.to_dict()}
+    return {"user": _serialize_user(user_db)}
 
 # User management endpoints
 @user_router.get("/")
@@ -710,7 +716,7 @@ async def get_users(skip: int = 0, limit: int = 100, user: dict = Depends(requir
     """Get list of users (for orchestrator/service-to-service communication)"""
     users = UserRepository.list_all(db, skip=skip, limit=limit)
     return {
-        "users": [u.to_dict() for u in users],
+        "users": [_serialize_user(u) for u in users],
         "count": len(users)
     }
 
@@ -720,7 +726,7 @@ async def get_user(user_id: str, user: dict = Depends(require_service_auth()), d
     user_data = UserRepository.get_by_id(db, user_id)
     if not user_data:
         raise HTTPException(status_code=404, detail="User not found")
-    return {"user": user_data.to_dict()}
+    return {"user": _serialize_user(user_data)}
 
 # Profile endpoints
 @profile_router.get("/")

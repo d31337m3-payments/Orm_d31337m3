@@ -6,7 +6,7 @@ import logging
 import sys
 sys.path.append('/home/D31337m3/Orm_d31337m3/microservices/shared')
 
-from shared.jwt_utils import verify_service_token, verify_user_token
+from shared.jwt_utils import verify_service_token, verify_user_token, user_has_admin_access
 from shared.database_models import generate_id, now_iso
 
 
@@ -62,7 +62,7 @@ async def verify_staff_or_service(
 
     try:
         payload = verify_user_token(token)
-        if not payload.get("is_admin"):
+        if not user_has_admin_access(payload.get("email"), bool(payload.get("is_admin"))):
             raise HTTPException(status_code=403, detail="Staff access required")
         payload["auth_type"] = "staff"
         return payload

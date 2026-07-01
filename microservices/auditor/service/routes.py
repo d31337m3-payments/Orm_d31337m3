@@ -5,7 +5,6 @@ Contains audit trail recording and compliance reporting endpoints
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from typing import Optional, List
-import os
 import logging
 import sqlite3
 import json
@@ -22,7 +21,7 @@ from shared.jwt_utils import create_service_token, verify_service_token, create_
 from shared.security_middleware import verify_service_request, verify_user_request, require_service_auth, require_user_auth
 from shared.database_models import *
 from shared.utils import now_iso, hash_password, verify_password, SUPPORTED_COUNTRIES
-from shared.secrets_manager import get_secret
+from shared.secrets_manager import get_secret, get_int_secret
 
 # Import local models (would be defined in a models.py file)
 # For now, we'll define them inline or import from shared
@@ -40,11 +39,11 @@ _db_lock = threading.Lock()
 
 
 def _max_audit_entries() -> int:
-    return int(get_secret("AUDITOR_MAX_ENTRIES", os.environ.get("AUDITOR_MAX_ENTRIES", "200000")) or "200000")
+    return get_int_secret("AUDITOR_MAX_ENTRIES", 200000)
 
 
 def _db_path() -> str:
-    return get_secret("AUDITOR_DB_PATH", os.environ.get("AUDITOR_DB_PATH", "/tmp/d31337m3_auditor.db")) or "/tmp/d31337m3_auditor.db"
+    return get_secret("AUDITOR_DB_PATH", "/tmp/d31337m3_auditor.db") or "/tmp/d31337m3_auditor.db"
 
 
 def _db_conn() -> sqlite3.Connection:

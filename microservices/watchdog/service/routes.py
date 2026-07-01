@@ -5,7 +5,6 @@ Contains service health monitoring, metrics collection, and alerting endpoints
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from typing import Optional, List, Dict, Any
-import os
 import logging
 import asyncio
 import time
@@ -24,7 +23,7 @@ from shared.jwt_utils import create_service_token, verify_service_token, create_
 from shared.security_middleware import verify_service_request, verify_user_request, require_service_auth, require_user_auth
 from shared.database_models import *
 from shared.utils import now_iso, hash_password, verify_password, SUPPORTED_COUNTRIES
-from shared.secrets_manager import get_secret
+from shared.secrets_manager import get_secret, get_int_secret
 
 # Import local models (would be defined in a models.py file)
 # For now, we'll define them inline or import from shared
@@ -40,8 +39,8 @@ alert_router = APIRouter()
 
 SERVICE_HEALTH_RECORDS: List[dict] = []
 ALERT_RECORDS: List[dict] = []
-MAX_HEALTH_RECORDS = int(os.environ.get("WATCHDOG_MAX_HEALTH_RECORDS", "200000"))
-MAX_ALERT_RECORDS = int(os.environ.get("WATCHDOG_MAX_ALERT_RECORDS", "200000"))
+MAX_HEALTH_RECORDS = get_int_secret("WATCHDOG_MAX_HEALTH_RECORDS", 200000)
+MAX_ALERT_RECORDS = get_int_secret("WATCHDOG_MAX_ALERT_RECORDS", 200000)
 _db_lock = threading.Lock()
 
 DEFAULT_SERVICE_URLS = {
@@ -51,6 +50,8 @@ DEFAULT_SERVICE_URLS = {
     "auditor": "http://127.0.0.1:8005",
     "orchestrator": "http://127.0.0.1:8006",
     "watchdog": "http://127.0.0.1:8007",
+    "support_hub": "http://127.0.0.1:8008",
+    "workforce_ops": "http://127.0.0.1:8009",
 }
 
 
@@ -75,7 +76,7 @@ def _health_window_minutes() -> int:
 
 
 def _db_path() -> str:
-    return get_secret("WATCHDOG_DB_PATH", os.environ.get("WATCHDOG_DB_PATH", "/tmp/d31337m3_watchdog.db")) or "/tmp/d31337m3_watchdog.db"
+    return get_secret("WATCHDOG_DB_PATH", "/tmp/d31337m3_watchdog.db") or "/tmp/d31337m3_watchdog.db"
 
 
 def _db_conn() -> sqlite3.Connection:

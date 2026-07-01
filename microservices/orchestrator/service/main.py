@@ -3,7 +3,6 @@ Orchestrator Service - Main Application Entry Point
 Manages service discovery, startup ordering, and lifecycle events
 """
 
-import os
 import logging
 import asyncio
 from fastapi import FastAPI
@@ -18,7 +17,7 @@ from shared.jwt_utils import create_service_token, verify_service_token, verify_
 from shared.security_middleware import verify_service_request, require_service_auth, verify_user_request
 from shared.database_models import generate_id, now_iso
 from shared.utils import SUPPORTED_COUNTRIES
-from shared.secrets_manager import init_infisical
+from shared.secrets_manager import init_infisical, get_cors_allowed_origins
 
 # Initialize Infisical before importing routes to ensure module-level config can read loaded secrets.
 init_infisical()
@@ -30,6 +29,7 @@ from .routes import (
     admin_router,
     support_router,
     workforce_router,
+    public_router,
     run_support_state_cleanup,
     support_anon_cleanup_interval_seconds,
 )
@@ -38,17 +38,14 @@ from .routes import (
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger("orchestrator")
 
-CORS_ALLOWED_ORIGINS = [
-    o.strip()
-    for o in os.environ.get("CORS_ORIGINS", "https://d31337m3.com,https://www.d31337m3.com,http://localhost:3000,http://127.0.0.1:3000").split(",")
-    if o.strip()
-]
+CORS_ALLOWED_ORIGINS = get_cors_allowed_origins()
+STARTED_AT = now_iso()
 
 # Create FastAPI app
 app = FastAPI(
     title="Orchestrator Service",
     description="Service discovery and lifecycle management for microservices",
-    version="1.0.0"
+    version="1.0.5"
 )
 
 # Add CORS middleware
@@ -66,6 +63,7 @@ app.include_router(health_router, prefix="/api/health", tags=["health"])
 app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 app.include_router(support_router, prefix="/api/support", tags=["support"])
 app.include_router(workforce_router, prefix="/api/workforce", tags=["workforce"])
+app.include_router(public_router, prefix="/api/public", tags=["public"])
 
 # Service registry (in production, this would be more sophisticated)
 SERVICE_REGISTRY: Dict[str, dict] = {}
@@ -74,8 +72,10 @@ SERVICE_STARTUP_ORDER = [
     "client_index", # 2. Identity and auth ready
     "data_handling",# 3. Data store ready
     "payments",     # 4. Billing flows ready
-    "watchdog",     # 5. Monitoring can begin
-    "orchestrator"  # 6. Coordinates the others and exposes global state
+    "support_hub",  # 5. Customer chat and ticket operations
+    "workforce_ops",# 6. Employee scheduling and payroll
+    "watchdog",     # 7. Monitoring can begin
+    "orchestrator"  # 8. Coordinates the others and exposes global state
 ]
 
 _support_cleanup_task: Optional[asyncio.Task] = None
@@ -100,8 +100,10 @@ async def _support_cleanup_loop():
 @app.get("/health")
 async def health_check():
     return {
-        "service": "orchestrator", 
-        "status": "healthy", 
+        "service": "orchestrator",
+        "status": "healthy",
+        "version": app.version,
+        "started_at": STARTED_AT,
         "timestamp": now_iso(),
         "registered_services": len(SERVICE_REGISTRY),
         "services": list(SERVICE_REGISTRY.keys())

@@ -6,6 +6,7 @@ import { Terminal, Shield, Database, Bell, Activity, Lock, Search, FileSignature
 import FeatureDialog from "@/components/FeatureDialog";
 import CanadaFlag from "@/components/CanadaFlag";
 import BrokerSubmissionDialog from "@/components/BrokerSubmissionDialog";
+import api from "@/lib/api";
 
 const BROKERS = ["SPOKEO","WHITEPAGES","ACXIOM","BEENVERIFIED","INTELIUS","MYLIFE","RADARIS","PEOPLEFINDER","TRUTHFINDER","INSTANTCHECKMATE","EQUIFAX","PEEKYOU","USSEARCH","FASTPEOPLESEARCH","GOOGLE","BING"];
 
@@ -189,14 +190,14 @@ const PRIVACY_VARIANTS = [
   "PR0T3CT Y0UR PR1VACY FR0M 7H3 N37",
 ];
 
-const PUBLIC_SERVICE_HEALTH_DEFAULT = [
-  { key: "api", label: "API Ingress", status: "operational", latencyMs: 34 },
-  { key: "auth", label: "Auth", status: "operational", latencyMs: 28 },
-  { key: "billing", label: "Billing", status: "operational", latencyMs: 41 },
-  { key: "scan", label: "Scan Pipeline", status: "operational", latencyMs: 57 },
-  { key: "support", label: "Support", status: "operational", latencyMs: 39 },
-  { key: "audit", label: "Audit Trail", status: "operational", latencyMs: 31 },
-];
+const SERVICE_LABELS = {
+  auditor: "Audit Trail", client_index: "Auth / Identity", data_handling: "Data Store",
+  payments: "Billing", support_hub: "Support", workforce_ops: "Workforce",
+  watchdog: "Watchdog", orchestrator: "Orchestrator",
+};
+
+const STATUS_COLOR = { healthy: "bg-[#00FF41]", degraded: "bg-[#FFA500]", unhealthy: "bg-[#FF3333]", unknown: "bg-zinc-600" };
+const STATUS_LABEL = { healthy: "UP", degraded: "DEGR", unhealthy: "DOWN", unknown: "???" };
 
 const LAUNCH_ANNOUNCEMENT_PREVIEW =
   "D31337m3.com (pronounced delete me dot com) is shipping a security-first refactor focused on reliability, privacy controls, and trust.";
@@ -219,7 +220,7 @@ export default function Landing() {
   const [heroText, setHeroText] = useState("D31337 YOURSELF");
   const [displayText, setDisplayText] = useState(heroText);
   const [nowTs, setNowTs] = useState(Date.now());
-  const [serviceHealth, setServiceHealth] = useState(PUBLIC_SERVICE_HEALTH_DEFAULT);
+  const [serviceHealth, setServiceHealth] = useState([]);
   const [healthLastChecked, setHealthLastChecked] = useState(Date.now());
   const [waitlistEmail, setWaitlistEmail] = useState("");
   const [waitlistNote, setWaitlistNote] = useState("");
@@ -247,17 +248,20 @@ export default function Landing() {
   }, []);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setServiceHealth((prev) =>
-        prev.map((svc) => {
-          const jitter = Math.round((Math.random() - 0.5) * 8);
-          const nextLatency = Math.min(95, Math.max(16, (svc.latencyMs || 30) + jitter));
-          return { ...svc, latencyMs: nextLatency };
-        })
-      );
-      setHealthLastChecked(Date.now());
-    }, 12000);
-    return () => clearInterval(timer);
+    let mounted = true;
+    const fetchHealth = async () => {
+      try {
+        const res = await api.get("/api/public/health-summary");
+        if (!mounted) return;
+        setServiceHealth(res.data.services || []);
+        setHealthLastChecked(Date.now());
+      } catch {
+        if (!mounted) return;
+      }
+    };
+    fetchHealth();
+    const timer = setInterval(fetchHealth, 30000);
+    return () => { mounted = false; clearInterval(timer); };
   }, []);
 
   useEffect(() => {
@@ -585,11 +589,27 @@ export default function Landing() {
                 <span className="flex items-center gap-1.5 text-[#00FF41]"><span className="w-2 h-2 bg-[#00FF41] rounded-full blink"/>LIVE</span>
               </div>
               <div className="space-y-1">
-              {serviceHealth.map((svc) => (
-                <div key={svc.key} className="text-zinc-400">
-                  › <span className="text-white">{svc.label}</span> · <span className="text-zinc-500">{svc.latencyMs}ms</span> · <span className="text-[#00FF41] uppercase">{svc.status}</span>
-                </div>
-              ))}
+              {serviceHealth.map((svc) => {
+                const color = STATUS_COLOR[svc.status] || STATUS_COLOR.unknown;
+                const label = STATUS_LABEL[svc.status] || STATUS_LABEL.unknown;
+                const uptime = svc.started_at
+                  ? (() => {
+                      const diff = Date.now() - new Date(svc.started_at).getTime();
+                      const h = Math.floor(diff / 3600000);
+                      const m = Math.floor((diff % 3600000) / 60000);
+                      return `${h}h ${m}m`;
+                    })()
+                  : "";
+                return (
+                  <div key={svc.service} className="flex items-center gap-2 text-zinc-400 text-sm">
+                    <span className={`w-2 h-2 rounded-full ${color} shrink-0`} />
+                    <span className="text-white font-medium">{SERVICE_LABELS[svc.service] || svc.service}</span>
+                    <span className="text-zinc-600">{svc.version || "?"}</span>
+                    <span className={`uppercase text-xs font-bold ${color.replace("bg-", "text-")}`}>{label}</span>
+                    {uptime && <span className="text-zinc-600 text-xs">{uptime}</span>}
+                  </div>
+                );
+              })}
               </div>
               <div className="mt-3 text-zinc-500">Last checked: {new Date(healthLastChecked).toLocaleTimeString()}</div>
               <div className="mt-2 text-zinc-600">Public-safe status only. Detailed security diagnostics are intentionally redacted.</div>

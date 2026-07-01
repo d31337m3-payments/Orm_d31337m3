@@ -5,7 +5,6 @@ Contains data scraping, enrichment, scan execution, and findings management endp
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request, status
 from typing import Optional, List, Dict
-import os
 import logging
 import json
 import sqlite3
@@ -25,7 +24,7 @@ from shared.jwt_utils import create_service_token, verify_service_token, create_
 from shared.security_middleware import verify_service_request, verify_user_request, require_service_auth, require_user_auth
 from shared.database_models import *
 from shared.utils import now_iso, hash_password, verify_password, SUPPORTED_COUNTRIES, DATA_BROKERS, BROKER_DIRECTORY, PLANS
-from shared.secrets_manager import get_secret
+from shared.secrets_manager import get_secret, get_int_secret
 
 # Import local models (would be defined in a models.py file)
 # For now, we'll define them inline or import from shared
@@ -47,14 +46,14 @@ USER_KEYWORDS: Dict[str, List[str]] = {}
 USER_FINDINGS: Dict[str, List[str]] = {}
 USER_SCANS: Dict[str, List[str]] = {}
 
-MAX_KEYWORDS = int(os.environ.get("DATA_HANDLING_MAX_KEYWORDS", "200000"))
-MAX_FINDINGS = int(os.environ.get("DATA_HANDLING_MAX_FINDINGS", "1000000"))
-MAX_SCANS = int(os.environ.get("DATA_HANDLING_MAX_SCANS", "500000"))
+MAX_KEYWORDS = get_int_secret("DATA_HANDLING_MAX_KEYWORDS", 200000)
+MAX_FINDINGS = get_int_secret("DATA_HANDLING_MAX_FINDINGS", 1000000)
+MAX_SCANS = get_int_secret("DATA_HANDLING_MAX_SCANS", 500000)
 _db_lock = threading.Lock()
 
 
 def _db_path() -> str:
-    return get_secret("DATA_HANDLING_DB_PATH", os.environ.get("DATA_HANDLING_DB_PATH", "/tmp/d31337m3_data_handling.db")) or "/tmp/d31337m3_data_handling.db"
+    return get_secret("DATA_HANDLING_DB_PATH", "/tmp/d31337m3_data_handling.db") or "/tmp/d31337m3_data_handling.db"
 
 
 def _db_conn() -> sqlite3.Connection:

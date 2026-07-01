@@ -3,7 +3,6 @@ Shared utility functions for microservices
 Contains common helper functions used across services
 """
 
-import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -11,6 +10,7 @@ from typing import Optional, List, Dict, Any
 from urllib.parse import quote_plus
 
 from .database_models import hash_password, verify_password
+from .secrets_manager import get_secret, get_int_secret
 
 # Common utility functions
 
@@ -347,8 +347,8 @@ PLANS = {
     },
 }
 
-CRYPTO_WALLET = os.environ.get("CRYPTO_WALLET", "")
-PAYMENTS_EMAIL = os.environ.get("PAYMENTS_EMAIL", "payments@example.com")
+CRYPTO_WALLET = get_secret("CRYPTO_WALLET", "")
+PAYMENTS_EMAIL = get_secret("PAYMENTS_EMAIL", "payments@example.com")
 
 
 async def verify_usdc_tx(network: str, tx_hash: str, expected_amount_usd: float) -> Optional[dict]:
@@ -544,7 +544,7 @@ async def send_email_mock(to: str, subject: str, body: str, attachments: Optiona
 RATE_LIMITS: Dict[str, List[float]] = {}
 RATE_WINDOW_SEC = 60 * 15  # 15 minutes
 RATE_MAX_ATTEMPTS = 8
-RATE_LIMIT_MAX_KEYS = int(os.environ.get("RATE_LIMIT_MAX_KEYS", "50000"))
+RATE_LIMIT_MAX_KEYS = get_int_secret("RATE_LIMIT_MAX_KEYS", 50000)
 
 def _ratelimit(key: str) -> tuple[bool, int]:
     """Return (allowed, retry_after_seconds)"""

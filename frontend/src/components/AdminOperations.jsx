@@ -251,17 +251,39 @@ export default function AdminOperations() {
             <thead>
               <tr className="border-b border-[#222]">
                 <th className="text-left overline py-2">service</th>
-                <th className="text-left overline py-2">status</th>
-                <th className="text-left overline py-2">host:port</th>
+                <th className="text-left overline py-2">version</th>
+                <th className="text-left overline py-2">alive</th>
+                <th className="text-left overline py-2">health</th>
+                <th className="text-left overline py-2">alive since</th>
                 <th className="text-left overline py-2">actions</th>
               </tr>
             </thead>
             <tbody>
-              {startupSeq.map((s) => (
+              {startupSeq.map((s) => {
+                const versionChanged = s.last_version && s.version && s.last_version !== s.version;
+                const alive = s.status === "healthy" || s.status === "starting";
+                const ago = s.started_at ? (() => {
+                  const ms = Date.now() - new Date(s.started_at).getTime();
+                  const h = Math.floor(ms / 3600000);
+                  const m = Math.floor((ms % 3600000) / 60000);
+                  return `${h}h ${m}m`;
+                })() : "—";
+                return (
                 <tr key={s.service_name} className="border-b border-[#222]">
                   <td className="font-mono text-xs py-2">{s.service_name}</td>
+                  <td className="font-mono text-xs py-2">
+                    {s.last_version && s.last_version !== s.version ? (
+                      <span className="text-zinc-500 line-through mr-1">{s.last_version}</span>
+                    ) : null}
+                    <span className={versionChanged ? "text-[#00FF41]" : "text-zinc-300"}>{s.version || "—"}</span>
+                  </td>
+                  <td className="py-2">
+                    <span className={`font-mono text-[10px] px-2 py-0.5 border ${alive ? "text-[#00FF41] border-[#00FF41]" : "text-[#FF3333] border-[#FF3333]"}`}>
+                      {alive ? "UP" : "DOWN"}
+                    </span>
+                  </td>
                   <td className="py-2"><StatusPill status={s.status} /></td>
-                  <td className="font-mono text-xs py-2 text-zinc-400">{s.host ? `${s.host}:${s.port}` : "—"}</td>
+                  <td className="font-mono text-[10px] py-2 text-zinc-500">{ago}</td>
                   <td className="py-2">
                     <div className="flex gap-2 flex-wrap">
                       <button className="brutal-btn !py-1 !px-2 text-[10px]" onClick={() => triggerHeartbeat(s.service_name)}>heartbeat</button>
@@ -277,7 +299,8 @@ export default function AdminOperations() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -3,7 +3,6 @@ Example showing how to use the Auditor Service
 Demonstrates audit trail recording and compliance reporting
 """
 
-import os
 import sys
 import httpx
 import asyncio
@@ -15,9 +14,7 @@ sys.path.append('/home/D31337m3/Orm_d31337m3/microservices/auditor/service')
 from shared.jwt_utils import create_service_token, verify_service_token
 from shared.security_middleware import verify_service_request
 
-# Service-specific secrets (should come from environment variables in production)
-AUDITOR_JWT_SECRET = os.environ.get("AUDITOR_JWT_SECRET", "change-me-in-production")
-CLIENT_INDEX_JWT_SECRET = os.environ.get("CLIENT_INDEX_JWT_SECRET", "change-me-in-production")
+
 
 async def example_audit_recording():
     """Example of how to record audit events through the auditor service"""

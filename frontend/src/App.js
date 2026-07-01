@@ -13,6 +13,8 @@ import Admin from "@/pages/Admin";
 import Documents from "@/pages/Documents";
 import Security from "@/pages/Security";
 import SecurityCenter from "@/pages/SecurityCenter";
+import WorkforcePortal from "@/pages/WorkforcePortal";
+import SupportPortal from "@/pages/SupportPortal";
 
 const Protected = ({ children, admin = false }) => {
   const { user, loading } = useAuth();
@@ -39,6 +41,8 @@ function App() {
             <Route path="/documents" element={<Protected><Documents /></Protected>} />
             <Route path="/security" element={<Protected><Security /></Protected>} />
             <Route path="/admin" element={<Protected admin><Admin /></Protected>} />
+            <Route path="/workforce-portal" element={<Protected><WorkforcePortal /></Protected>} />
+            <Route path="/support-portal" element={<Protected><SupportPortal /></Protected>} />
           </Routes>
         </BrowserRouter>
       </AuthProvider>

@@ -5,15 +5,13 @@ import AdminTable from "@/components/AdminTable";
 import Drawer, { Field } from "@/components/Drawer";
 import api from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { useNavigate } from "react-router-dom";
-import { CheckCircle2, XCircle, UserX, KeyRound, Play, LogIn, Trash2, ShieldCheck, ShieldOff, Eye } from "lucide-react";
+import { useNavigate, Link } from "react-router-dom";
+import { CheckCircle2, XCircle, UserX, KeyRound, Play, LogIn, Trash2, ShieldCheck, ShieldOff, Eye, Users, Headphones } from "lucide-react";
 import AdminAnalytics from "@/components/AdminAnalytics";
 import AdminHealth from "@/components/AdminHealth";
 import AdminBrokerContacts from "@/components/AdminBrokerContacts";
 import AdminSettings from "@/components/AdminSettings";
 import AdminOperations from "@/components/AdminOperations";
-import AdminSupportPanel from "@/components/AdminSupportPanel";
-import AdminWorkforcePanel from "@/components/AdminWorkforcePanel";
 
 const Stat = ({ label, value, testid }) => (
   <div className="brutal-card p-5" data-testid={testid}>
@@ -334,8 +332,6 @@ export default function Admin() {
           ["users","Users"],
           ["documents","Documents"],
           ["brokers","Brokers"],
-          ["support","Support"],
-          ["workforce","Workforce Ops"],
           ["emails","Email Log"],
           ["audit","Audit Log"],
           ["auth-security","Auth Security"],
@@ -346,14 +342,18 @@ export default function Admin() {
             {l.toUpperCase()}
           </button>
         ))}
+        <Link to="/workforce-portal" className="font-mono text-xs px-4 py-2 border border-[#222] text-zinc-500 hover:text-white hover:border-zinc-500 flex items-center gap-1">
+          <Users size={12} /> WORKFORCE PORTAL
+        </Link>
+        <Link to="/support-portal" className="font-mono text-xs px-4 py-2 border border-[#222] text-zinc-500 hover:text-white hover:border-zinc-500 flex items-center gap-1">
+          <Headphones size={12} /> SUPPORT PORTAL
+        </Link>
       </div>
 
       {tab === "analytics" && <AdminAnalytics />}
       {tab === "operations" && <AdminOperations />}
       {tab === "health" && <AdminHealth />}
       {tab === "brokers" && <AdminBrokerContacts />}
-      {tab === "support" && <AdminSupportPanel />}
-      {tab === "workforce" && <AdminWorkforcePanel />}
       {tab === "settings" && <AdminSettings />}
 
       {tab === "payments" && (

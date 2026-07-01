@@ -3,7 +3,6 @@ Example showing how to use the Watchdog Service
 Demonstrates service health monitoring, metrics collection, and alerting
 """
 
-import os
 import sys
 import httpx
 import asyncio
@@ -14,10 +13,6 @@ sys.path.append('/home/D31337m3/Orm_d31337m3/microservices/watchdog/service')
 
 from shared.jwt_utils import create_service_token, verify_service_token
 from shared.security_middleware import verify_service_request
-
-# Service-specific secrets (should come from environment variables in production)
-WATCHDOG_JWT_SECRET = os.environ.get("WATCHDOG_JWT_SECRET", "change-me-in-production")
-CLIENT_INDEX_JWT_SECRET = os.environ.get("CLIENT_INDEX_JWT_SECRET", "change-me-in-production")
 
 async def example_health_monitoring():
     """Example of how to monitor service health through the watchdog service"""
